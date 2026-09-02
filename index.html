@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TV Control Hub — Gesture Edition | Hand-Gesture TV Remote for the Web</title>
+<meta name="description" content="Control any Android TV / Google TV on the same Wi-Fi from your browser using hand gestures. Up/Down/Left/Right zones + two-finger air-draw letters when search is active.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="ambient-bg"></div>
+
+<div id="page-home" class="page active">
+<nav class="navbar" id="navbar">
+  <div class="nav-inner">
+    <a class="brand" href="#">
+      <span class="brand-icon">◉</span>
+      <span class="brand-text">TV Control Hub <em>Gesture</em></span>
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="#discover">Discover</a>
+      <a href="#gesture">Gesture</a>
+      <a href="#draw">Air-Draw</a>
+      <a href="https://github.com/Shrey113/TV-Control-Hub" target="_blank" rel="noopener">Original Repo ↗</a>
+    </div>
+    <div class="nav-actions">
+      <div class="conn-pill" id="connPill"><span class="dot"></span><span id="connText">Not connected</span></div>
+      <button class="theme-btn" id="themeToggle" aria-label="Toggle theme">◐</button>
+      <button class="hamburger" id="navToggle"><span></span><span></span><span></span></button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <div class="eyebrow"><span class="live-dot"></span> Browser-native • No install • Same Wi-Fi</div>
+      <h1>Your hand <span class="accent">is the remote.</span></h1>
+      <p class="sub">Search any TV on the local network, then control it with <strong>neon-glowing air gestures</strong> — Up / Down / Left / Right zones and <strong>two-finger air-draw</strong> typing.</p>
+      <div class="cta-row">
+        <a href="#discover" class="btn primary">Start Scanning ↓</a>
+        <button class="btn go-live" id="goLiveBtn">🚀 Go Live — bring everything up</button>
+      </div>
+      <div class="limit-banner">
+        <strong>⚠️ Browser limit:</strong> Web pages cannot silently scan your LAN (no mDNS/SSDP). This site shows <em>simulated discovery</em> + manual IP + optional local bridge.
+      </div>
+    </div>
+    <div class="hero-visual">
+      <!-- Simplified Hero TV Mock -->
+      <div class="tv-mock">
+        <div class="tv-header"><span>● ● ●</span><span>Android TV • Living Room</span></div>
+        <div class="tv-screen flashy">
+          <div class="flashy-circle"></div>
+          <div class="hand-hint">👋 Connect to enter Fullscreen Zones</div>
+          <div class="hand-hint secondary">✌ Two fingers for Air-Draw</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="discover" class="section">
+  <div class="container">
+    <div class="section-head">
+      <h2><span class="num">01</span> Discover TVs on your network</h2>
+      <p>Scans the inferred subnet, shows real mDNS names if bridge is running, otherwise presents realistic mock results you can connect to. Add your TV IP manually to connect for real.</p>
+      <details class="explain">
+        <summary>How discovery works on the web ℹ️</summary>
+        <p>Native Android uses NSD/mDNS + Cast SDK. Browsers block raw socket discovery. We: (1) infer your subnet via WebRTC, (2) simulate scan UI (instant feel), (3) allow <code>192.168.x.x</code> direct connect, (4) ship a tiny Node bridge (<code>node bridge/server.js</code>) that does real SSDP on <code>:3001</code> — page auto-detects it at <code>http://localhost:3001</code>.</p>
+      </details>
+    </div>
+
+    <div class="discover-layout">
+      <div class="card control-card">
+        <div class="card-head">
+          <h3>Network Scan</h3>
+          <span class="subnet" id="subnetLabel">Detecting subnet…</span>
+        </div>
+        <div class="scan-actions">
+          <button class="btn primary" id="scanBtn">⟳ Scan for TVs</button>
+          <button class="btn ghost small" id="stopScanBtn" disabled>Stop</button>
+          <span class="scan-status" id="scanStatus">Idle</span>
+        </div>
+        <div class="progress-wrap"><div class="progress" id="scanProgress"></div></div>
+
+        <div class="manual-row">
+          <input id="manualIp" type="text" inputmode="numeric" placeholder="Manual IP e.g. 192.168.1.42">
+          <input id="manualName" type="text" placeholder="Name e.g. Bedroom TV">
+          <button class="btn small" id="addManualBtn">Add</button>
+        </div>
+
+        <div class="bridge-row" id="bridgeRow">
+          <span id="bridgeStatus">Checking for local bridge…</span>
+          <a href="#bridgeHelp">What is bridge?</a>
+        </div>
+
+        <div style="padding:8px 16px 0; display:flex; gap:8px">
+          <input id="tvSearch" type="text" placeholder="Search device name (e.g. tv)" value="tv" style="flex:1; min-width:0; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:10px 12px; border-radius:10px; font-weight:600; outline:none; font-size:.88em">
+          <button class="btn small ghost" id="clearSearchBtn">Clear</button>
+        </div>
+        <div class="tv-list" id="tvList">
+          <div class="empty">No TVs found yet. Hit <strong>Scan</strong> (takes <2s) or try Quick Demo. Searching for "tv" devices.</div>
+        </div>
+        <div style="padding:0 16px 12px; display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn small ghost" id="quickDemoBtn">⚡ Quick Demo — Add 2 TVs Instantly</button>
+          <button class="btn small ghost" id="wifiCheckBtn">📶 Check Wi-Fi</button>
+        </div>
+      </div>
+
+      <div class="card remote-card">
+        <div class="card-head">
+          <h3>Connected TV</h3>
+          <label class="toggle">
+            <input type="checkbox" id="searchToggle">
+            <span></span> 🔍 Search / Keyboard active
+          </label>
+        </div>
+        <div id="connectedPanel" class="connected-empty">
+          <div class="big-icon">📺</div>
+          <p>Not connected</p>
+          <small>Select a TV from the list and pair with the 6-digit code shown on the TV.</small>
+        </div>
+        <div id="remotePanel" class="remote-panel hidden">
+          <div class="tv-info">
+            <div class="tv-avatar" id="tvAvatar">L</div>
+            <div>
+              <div class="tv-name" id="tvName">Living Room TV</div>
+              <div class="tv-meta" id="tvMeta">192.168.1.101 • Android TV • Paired</div>
+            </div>
+            <button class="btn ghost small" id="disconnectBtn">Disconnect</button>
+          </div>
+
+          <div class="dpad-wrap">
+            <div class="dpad" id="dpad">
+              <button class="dpad-btn up" data-cmd="DPAD_UP">▲</button>
+              <button class="dpad-btn left" data-cmd="DPAD_LEFT">◀</button>
+              <button class="dpad-btn center" data-cmd="DPAD_CENTER">OK</button>
+              <button class="dpad-btn right" data-cmd="DPAD_RIGHT">▶</button>
+              <button class="dpad-btn down" data-cmd="DPAD_DOWN">▼</button>
+            </div>
+            <div class="dpad-label">CENTER = dead-zone for gestures (keypad lives here). Click OK to select. Use zones for navigation.</div>
+          </div>
+
+          <div class="quick-grid">
+            <button class="qbtn" data-cmd="HOME">⌂ Home</button>
+            <button class="qbtn" data-cmd="BACK">↩ Back</button>
+            <button class="qbtn" data-cmd="VOLUME_UP">🔊 Vol+</button>
+            <button class="qbtn" data-cmd="VOLUME_DOWN">🔈 Vol−</button>
+            <button class="qbtn" data-cmd="MUTE">🔇 Mute</button>
+            <button class="qbtn" data-cmd="POWER">⏻ Power</button>
+          </div>
+
+          <div class="field-row">
+            <input id="textInput" type="text" placeholder="Type & send to TV (when search active)">
+            <button class="btn small primary" id="sendTextBtn">Send</button>
+            <button class="btn small ghost" id="clearTextBtn">Clear</button>
+          </div>
+          <button class="btn primary fullscreen-trigger" id="enterZonesBtn">Enter Fullscreen Mode 🔲</button>
+
+          <div class="log-wrap">
+            <div class="log-head"><span>Command log</span><button class="link" id="clearLogBtn">clear</button></div>
+            <div class="log" id="cmdLog"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="gesture" class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <h2><span class="num">02</span> One-hand gesture → D-Pad</h2>
+      <p>Open palm (or index finger) position is mapped to <strong>UP / DOWN / LEFT / RIGHT</strong>. <strong>Hold your hand steady in a zone for 2 seconds</strong> (~<strong>hold-to-click</strong>) and the D-Pad command fires — no more accidental fast clicks. <strong>CENTER</strong> is intentionally idle — it’s the keypad/dwell zone where no D-Pad event fires (avoid accidental inputs while typing/drawing).</p>
+    </div>
+
+    <div class="gesture-layout">
+      <div class="card camera-card">
+        <div class="card-head">
+          <h3>Camera & Zones</h3>
+          <div class="cam-controls">
+            <button class="btn small primary" id="camToggle">Enable Camera</button>
+            <label class="toggle small"><input type="checkbox" id="mirrorToggle" checked><span></span> Mirror</label>
+          </div>
+        </div>
+
+        <div class="video-wrap" id="videoWrap">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <canvas id="zoneOverlay"></canvas>
+          <div class="video-placeholder" id="videoPlaceholder">
+            <div class="ph-icon">📷</div>
+            <p>Camera off</p>
+            <small>Enable to start gesture control. Grant camera permission when prompted. Use HTTPS or localhost.</small>
+          </div>
+          <div class="zone-label tl">LEFT</div>
+          <div class="zone-label tr">RIGHT</div>
+          <div class="zone-label tc">UP</div>
+          <div class="zone-label bc">DOWN</div>
+          <div class="zone-label cc">CENTER — idle</div>
+        </div>
+
+        <div class="gesture-status">
+          <div class="gs-item"><span class="k">Gesture</span><span class="v" id="gestureLabel">—</span></div>
+          <div class="gs-item"><span class="k">Zone</span><span class="v" id="zoneLabel">—</span></div>
+          <div class="gs-item"><span class="k">Confidence</span><span class="v" id="confLabel">—</span></div>
+          <div class="gs-item"><span class="k">FPS</span><span class="v" id="fpsLabel">—</span></div>
+        </div>
+
+        <div class="sliders">
+          <label>Hold-to-click <input type="range" id="cooldownRange" min="400" max="3000" value="1200" step="100"><span id="cooldownVal">1.2s</span></label>
+          <label>Center dead-zone <input type="range" id="deadRange" min="20" max="45" value="32" step="1"><span id="deadVal">32%</span></label>
+          <label><input type="checkbox" id="showLandmarks" checked> Show hand skeleton</label>
+          <label><input type="checkbox" id="pauseGestures"> Pause gestures (Space)</label>
+        </div>
+      </div>
+
+      <div class="card info-card">
+        <h3>How it decides</h3>
+        <ol class="steps">
+          <li><strong>1 hand + ≤1 finger extended</strong> → navigation mode. Palm centroid mapped to zones.</li>
+          <li><strong>2 fingers (index + middle) extended</strong> → drawing mode (see next section). Navigation paused.</li>
+          <li>Hit <strong>UP/DOWN/LEFT/RIGHT</strong> fires once per cooldown. Staying in zone does not spam.</li>
+          <li><strong>CENTER</strong> never fires a D-Pad command — use it as rest / to access on-screen keypad.</li>
+        </ol>
+        <div class="dpad-mini" id="dpadMini">
+          <div class="mini-btn" data-zone="UP">▲</div>
+          <div class="mini-row">
+            <div class="mini-btn" data-zone="LEFT">◀</div>
+            <div class="mini-btn center" data-zone="CENTER">·</div>
+            <div class="mini-btn" data-zone="RIGHT">▶</div>
+          </div>
+          <div class="mini-btn" data-zone="DOWN">▼</div>
+        </div>
+        <div class="tip">
+          <strong>Tip:</strong> For best results keep hand 40–80cm from camera, good lighting, plain background. Use <kbd>Space</kbd> to pause/resume.
+        </div>
+        <div class="keyboard-fallback">
+          <h4>Keyboard fallback</h4>
+          <p>Arrow keys → same commands. <kbd>Enter</kbd>=OK, <kbd>Backspace</kbd>=Back, <kbd>H</kbd>=Home.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- We remove the old #draw section from the home page since it's a fullscreen page now -->
+
+<section id="bridgeHelp" class="section alt small">
+  <div class="container">
+    <h3>🔌 Optional local bridge for real discovery</h3>
+    <p>For true LAN scanning, run the tiny Node helper that does SSDP / mDNS and forwards commands to TVs via the Android Remote protocol / HTTP. The web page auto-connects to it.</p>
+<pre><code>npm install
+node bridge/server.js
+# bridge listens on http://localhost:3001
+# page will show: ● Bridge connected</code></pre>
+    <p class="muted">Without the bridge, direct IP control still works if your TV exposes ADB/Remote port (enable “Network Remote” / “Android TV Remote Service” on your TV) and you allow CORS or use the bridge as proxy.</p>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-grid">
+    <div>Built from <a href="https://github.com/Shrey113/TV-Control-Hub" target="_blank">Shrey113/TV-Control-Hub</a> • Gesture Edition • MIT-ish demo • Runs entirely in browser.</div>
+    <div class="footer-links"><a href="#discover">Discover</a><a href="#gesture">Gestures</a></div>
+  </div>
+</footer>
+</div> <!-- /page-home -->
+
+<!-- FULLSCREEN GESTURE PAGE -->
+<div id="page-zones" class="page hidden fullscreen-page">
+  <button class="btn ghost exit-fs-btn" id="exitZonesBtn">Exit ✕</button>
+  <video id="fsVideo" class="fs-camera" autoplay playsinline muted></video>
+  <canvas id="fsOverlay" class="fs-overlay"></canvas>
+  <div class="fs-gesture-hud" id="fsGestureHud">Hold 2s to click &nbsp;•&nbsp; ✊ fist = OK &nbsp;•&nbsp; 👎 thumb-down = BACK &nbsp;•&nbsp; ✌ two fingers = draw</div>
+</div> <!-- /page-zones -->
+
+<!-- AIR-DRAW PAGE -->
+<div id="page-draw" class="page hidden fullscreen-page">
+  <button class="btn ghost exit-fs-btn" id="exitDrawBtn">Exit ✕</button>
+  <canvas id="handMini" class="hand-mini"></canvas>
+  <div class="air-canvas-wrap fs-air-wrap">
+    <canvas id="drawCanvas" width="1920" height="1080"></canvas>
+    <div class="air-overlay-hint" id="airHint">✌ Show two fingers to start drawing</div>
+    <!-- The glowing cursor that tracks finger -->
+    <div class="neon-cursor" id="neonCursor"></div>
+  </div>
+  <div class="fs-draw-hud">
+    <div class="fs-draw-word">
+      <div class="fs-recognized-char" id="fsRecognizedChar"></div>
+      <div class="fs-buffer" id="fsBuffer"></div>
+    </div>
+    <div class="fs-draw-controls">
+      <span class="badge" id="drawState">Idle</span>
+      <strong id="recognizedLetter" style="display:none">—</strong><span id="recogConf" style="display:none"></span>
+      <code id="textBuffer" style="display:none"></code>
+      <button class="btn primary glow-btn" id="sendBufferBtn">Send Word to TV</button>
+      <button class="btn ghost" id="clearBufferBtn">Clear</button>
+      <button class="btn ghost" id="undoDrawBtn">Undo</button>
+      <label class="toggle small"><input type="checkbox" id="autoSendToggle"><span></span> Auto-send</label>
+    </div>
+  </div>
+</div> <!-- /page-draw -->
+
+<div class="modal hidden" id="pairModal">
+  <div class="modal-card">
+    <h3>Pair with TV</h3>
+    <p>Enter the 6-digit code shown on <strong id="pairTvName">your TV</strong> (<span id="pairTvIp"></span>)</p>
+    <div class="pair-code-display">
+      <small>Code shown on your TV</small>
+      <div class="pair-code" id="pairCodeDisplay">······</div>
+      <button class="btn ghost small" id="copyPairCodeBtn">Copy code</button>
+    </div>
+    <div class="pair-inputs" id="pairInputs">
+      <input maxlength="1" inputmode="numeric"><input maxlength="1" inputmode="numeric"><input maxlength="1" inputmode="numeric"><input maxlength="1" inputmode="numeric"><input maxlength="1" inputmode="numeric"><input maxlength="1" inputmode="numeric">
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="pairCancel">Cancel</button>
+      <button class="btn primary" id="pairConfirm">Pair</button>
+    <div id="pairStatus" class="pair-status hidden"></div>
+    </div>
+    <p class="muted small" id="pairHint">Demo: any 6 digits works (e.g. 123456) or use the code shown above. Real pairing validated by TV / bridge.</p>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
