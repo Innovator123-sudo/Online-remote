@@ -2,10 +2,16 @@
   "version": 2,
   "public": true,
   "cleanUrls": true,
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }]
-    }
+  "builds": [
+    { "src": "*.html", "use": "@vercel/static" },
+    { "src": "*.js", "use": "@vercel/static" },
+    { "src": "*.css", "use": "@vercel/static" },
+    { "src": "*.json", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "headers": { "Cache-Control": "public, max-age=0, must-revalidate" }, "continue": true },
+    { "src": "/(app\\.js|style\\.css|remote\\.js|scan\\.js|scan-results\\.json)", "dest": "/$1" },
+    { "src": "/", "dest": "/index.html" },
+    { "src": "/(?!.*\\.(js|css|json|png|jpg|svg|ico)$).*", "dest": "/index.html" }
   ]
 }
