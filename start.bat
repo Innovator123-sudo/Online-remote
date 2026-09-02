@@ -11,7 +11,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo Starting unified server (website + bridge) on http://localhost:3000 ...
+echo Starting unified server (website + bridge) on http://localhost:5000 ...
 echo.
 
 REM Start unified server in new window
@@ -21,11 +21,11 @@ REM Wait for server to start
 timeout /t 3 /nobreak >nul
 
 echo Opening website...
-start http://localhost:3000
+start http://localhost:5000
 
 echo.
 echo ========================================
-echo Server running at http://localhost:3000
+echo Server running at http://localhost:5000
 echo Bridge API at http://localhost:3000/status and http://localhost:3001/status
 echo.
 echo - Click SCAN (shows TVs in <2s, Wi-Fi OK)

@@ -3,7 +3,7 @@
  * Serves the gesture website AND the Wi-Fi discovery API on ONE port.
  * 
  * Run: node server.js
- * Then open: http://localhost:3000
+ * Then open: http://localhost:5000
  * 
  * No deps required. If express/cors are installed, uses them, else raw http.
  * Also serves bridge API at /status, /scan, /pair, /cmd, /search
@@ -17,8 +17,8 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
-const BRIDGE_PORT = 3001; // also listen on 3001 for backward compat (local only)
+const PORT = parseInt(process.env.PORT, 10) || 5000;
+const BRIDGE_PORT = 5001; // also listen on 5001 for backward compat (local only)
 const isHosted = !!process.env.VERCEL || !!process.env.RENDER || !!process.env.NETLIFY || process.env.NODE_ENV === 'production';
 // When hosted (Vercel/Render/etc.) the server's LAN is the cloud, NOT the user's TV network.
 // So we disable real SSDP and per-user state sharing — each client uses localStorage + simulated discovery.
@@ -94,8 +94,8 @@ function rawSsdpScan(timeout=2200){
 
 async function ssdpScan(){
   if(isHosted){
-    console.log("[ssdp] Hosted mode — skipping real SSDP (cloud LAN != user LAN). Client uses simulated + local bridge.");
-    if(discovered.length===0) discovered.push(...MOCK_TVS.map(m=>({...m, via:'demo'})));
+    console.log("[ssdp] Hosted mode — skipping real SSDP (cloud LAN != user LAN). Client uses real scan + local bridge only.");
+    discovered = [];
     return;
   }
   console.log("[ssdp] Starting fast SSDP scan (<3s) — valid TV only (no mocks unless no valid found)...");
@@ -134,13 +134,15 @@ async function ssdpScan(){
   }catch(e){ if(e.code !== 'MODULE_NOT_FOUND') console.log("[ssdp] error:", e.message); }
   await Promise.all([raw, nodeScan]);
   // valid-only: only keep TVs that actually contain 'tv' (already filtered in rawSsdpScan)
-  // Enrich from scan-results.json but only valid tv-named
+  // Enrich from scan-results.json but only valid tv-named AND non-mock devices
   try{
     if(fs.existsSync('scan-results.json')){
       const j=JSON.parse(fs.readFileSync('scan-results.json','utf8'));
       (j.devices||[]).forEach(d=>{
-        if(d.ip && /tv/i.test(d.name||'') && !discovered.some(x=> x.ip===d.ip)){
-          discovered.push({name:d.name||`TV ${d.ip}`, ip:d.ip, model:d.st||'Android TV', via:'scan.js'});
+        const name = d.name || '';
+        const isMock = /\(mock\)|mock/i.test(name) || d.via==='mock';
+        if(d.ip && /tv/i.test(name) && !isMock && !discovered.some(x=> x.ip===d.ip)){
+          discovered.push({name:name||`TV ${d.ip}`, ip:d.ip, model:d.st||'Android TV', via:'scan.js'});
         }
       });
     }
@@ -203,6 +205,21 @@ function handleApi(req, res){
     });
     return true;
   }
+  if(p==='/validate' || p==='/api/validate'){
+    const ip = parsed.query.ip;
+    if(!ip){
+      res.writeHead(200, {'Content-Type':'application/json'});
+      return res.end(JSON.stringify({ok:false, valid:false, error:'no ip'}));
+    }
+    res.writeHead(200, {'Content-Type':'application/json'});
+    sendAdb(ip, ['shell','echo','test']).then(isValid=>{
+      console.log(`[validate] ${ip} → ${isValid?'valid':'invalid'}`);
+      res.end(JSON.stringify({ok:true, valid:isValid, via:'adb'}));
+    }).catch(err=>{
+      res.end(JSON.stringify({ok:true, valid:false, error:err.message||String(err)}));
+    });
+    return true;
+  }
   if(p==='/state'){
     res.writeHead(200, {'Content-Type':'application/json'});
     // Hosted: don't share state across users — pairing is per-browser localStorage
@@ -221,14 +238,28 @@ function handleApi(req, res){
   if(p==='/cmd' || p==='/api/cmd'){
     let body=''; req.on('data',c=> body+=c); req.on('end',()=>{
       try{ body=JSON.parse(body||'{}'); }catch{ body={}; }
-      res.writeHead(200, {'Content-Type':'application/json'});
-      if(!body.ip){ return res.end(JSON.stringify({ok:false, error:'no ip'})); }
+      if(!body.ip){ res.writeHead(400, {'Content-Type':'application/json'}); return res.end(JSON.stringify({ok:false, error:'no ip'})); }
+      // Add timeout to prevent hanging responses
+      const timeoutId = setTimeout(()=>{
+        console.error(`[cmd] Timeout for ${body.ip} ${body.cmd}`);
+        if(!res.writableEnded){
+          res.writeHead(504, {'Content-Type':'application/json'});
+          res.end(JSON.stringify({ok:false, sent:false, via:'adb', error:'command timeout'}));
+        }
+      }, 15000); // 15 second timeout
       sendAdbCommand(body.ip, body.cmd, body.payload||'').then(ok=>{
-        console.log(`[cmd] ${body.ip} ${body.cmd} → ${ok?'REAL ADB':'unavailable'}`);
+        clearTimeout(timeoutId);
+        console.log(`[cmd] ${body.ip} ${body.cmd} → ${ok?'SUCCESS':'FAILED'}`);
+        res.writeHead(200, {'Content-Type':'application/json'});
         res.end(JSON.stringify({ok, sent:ok, via:'adb'}));
+      }).catch(err=>{
+        clearTimeout(timeoutId);
+        console.error(`[cmd] ${body.ip} ${body.cmd} error: ${err.message}`);
+        res.writeHead(200, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({ok:false, sent:false, via:'adb', error:err.message}));
       });
     });
-    return true;
+    return true; // async
   }
   return false; // not api
 }
@@ -253,13 +284,24 @@ const KEYEVENT = {
 function sendAdb(ip, args){
   return new Promise((resolve)=>{
     const { execFile } = require('child_process');
+    // First attempt
     execFile(findAdbBin(), ['-s', `${ip}:5555`].concat(args), {timeout: 8000}, (err, stdout, stderr)=>{
       if(err){
         // Try reconnecting once, then retry the command
-        execFile(findAdbBin(), ['connect', `${ip}:5555`], {timeout: 4000}, ()=>{
-          execFile(findAdbBin(), ['-s', `${ip}:5555`].concat(args), {timeout: 8000}, (err2, o2, e2)=>{
-            resolve(!err2);
-          });
+        execFile(findAdbBin(), ['connect', `${ip}:5555`], {timeout: 4000}, (connErr, connOut, connErrOut)=>{
+          // Wait a moment for the connection to establish
+          setTimeout(() => {
+            // Retry the original command after connection attempt
+            execFile(findAdbBin(), ['-s', `${ip}:5555`].concat(args), {timeout: 8000}, (err2, o2, e2)=>{
+              if(err2){
+                console.error(`[adb] Failed to ${args.join(' ')} on ${ip}: ${err2.message}`);
+                resolve(false);
+              } else {
+                console.log(`[adb] Retry succeeded for ${args.join(' ')} on ${ip}`);
+                resolve(true);
+              }
+            });
+          }, 500);
         });
         return;
       }
@@ -307,7 +349,7 @@ function createMainServer(){
     console.log(`   No bridge needed — demo TVs appear instantly. Real TVs via SSDP if on same Wi-Fi.\n`);
   });
 
-  // Also listen on 3001 for old app.js that fetches http://localhost:3001/status (local only, not on hosted)
+  // Also listen on 5001 for old app.js that fetches http://localhost:5001/status (local only, not on hosted)
   if(!isHosted){
     const bridgeServer = http.createServer((req,res)=>{
       if(handleApi(req,res)) return;

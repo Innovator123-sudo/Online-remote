@@ -296,18 +296,16 @@ async function main(){
   // Also write results to file for website bridge to pick up — keep previous if none found
   try{
     const fs=require('fs');
-    if(all.length>0){
-      const out = { scannedAt: new Date().toISOString(), subnet: subnetStr, devices: all };
+    // Never write mock/fallback entries — only real Wi-Fi devices (no fake TVs)
+    const realOnly = all.filter(d=> d.via !== 'mock');
+    if(realOnly.length>0){
+      const out = { scannedAt: new Date().toISOString(), subnet: subnetStr, devices: realOnly };
       fs.writeFileSync('scan-results.json', JSON.stringify(out,null,2));
-      vlog('Wrote scan-results.json');
+      vlog('Wrote scan-results.json (real devices only)');
     } else {
-      // keep existing file if present, so website can still show last known TV
-      if(!fs.existsSync('scan-results.json')){
-        const out = { scannedAt: new Date().toISOString(), subnet: subnetStr, devices: [] };
-        fs.writeFileSync('scan-results.json', JSON.stringify(out,null,2));
-      } else {
-        vlog('No new devices — keeping existing scan-results.json');
-      }
+      // No real devices — do NOT leave stale mocks. Remove any existing file.
+      if(fs.existsSync('scan-results.json')) fs.writeFileSync('scan-results.json', JSON.stringify({scannedAt:new Date().toISOString(), subnet:subnetStr, devices:[]},null,2));
+      vlog('No real devices — cleared scan-results.json');
     }
   }catch{}
 

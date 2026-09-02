@@ -11,3 +11,6 @@ bridge/test-ssdp.js
 Thumbs.db
 .vercel
 .env
+
+.vercel
+.env*

@@ -23,7 +23,7 @@ const getArg = (k, def) => {
 const has = (k) => args.includes(k);
 const ipArg = getArg('--ip', getArg('--host', null));
 const pairCode = getArg('--pair', null);
-const bridgeUrls = ["http://localhost:3000", "http://localhost:3001"];
+const bridgeUrls = ["http://localhost:5000", "http://localhost:3000", "http://localhost:3001"];
 
 // Map CLI to DPAD
 const cmdMap = {
@@ -234,7 +234,7 @@ async function main(){
 
   log('\n✓ Done — check TV / bridge logs / website Command log');
   log(`  Bridge logs: ${bridge ? bridge+'/status' : 'demo mode (no bridge)'}`);
-  log(`  Website: http://localhost:3000 (shows LEFT/RIGHT/UP in log)`);
+  log(`  Website: http://localhost:5000 (shows LEFT/RIGHT/UP in log)`);
 }
 
 main().catch(e=>{ console.error(e); process.exit(1); });

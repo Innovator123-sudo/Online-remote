@@ -523,6 +523,14 @@ h1 .accent{
   box-shadow:0 8px 25px rgba(0,245,255,.25), 0 0 30px rgba(0,245,255,.15);
   background:linear-gradient(180deg, rgba(0,245,255,.08), var(--card));
 }
+.tv-item.invalid{
+  border-color:rgba(255,107,107,0.5); 
+  opacity:0.85;
+  background:linear-gradient(180deg, rgba(255,107,107,0.05), var(--card));
+}
+.tv-item.invalid .tv-item-name{
+  color:var(--muted);
+}
 .tv-icon{
   width:44px; 
   height:44px; 
@@ -1467,8 +1475,8 @@ pre{
   .sub{font-size:1em}
   .section{padding:28px 0}
   .container{padding:0 16px}
-  .card{border-radius:16px}
-  .card-head{padding:12px 14px}
+  .card{border-radius:16px; overflow:hidden}
+  .card-head{padding:12px 14px; flex-wrap:wrap}
   .discover-layout{gap:16px}
   .gesture-layout{gap:14px}
   .btn{padding:12px 16px; font-size:.9em}
@@ -1479,99 +1487,120 @@ pre{
   .qbtn{padding:9px 6px; font-size:.8em}
   .modal-card{border-radius:14px; padding:16px}
   .pair-inputs input{font-size:1.2em}
+  .scan-actions{flex-wrap:wrap}
+  .nav-actions{gap:8px}
+  .conn-pill span:last-child{max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 }
 
 /* Mobile phones */
 @media(max-width:600px){
-  .nav-inner{padding:10px 14px}
-  .brand-text{font-size:.95em}
-  .brand-icon{width:34px; height:34px; font-size:18px}
-  .conn-pill{padding:7px 12px; font-size:.76em}
-  .theme-btn,.hamburger{width:38px; height:38px}
-  .hero{padding:18px 14px 14px}
-  h1{font-size:clamp(1.6rem, 7vw, 2.4rem); margin:10px 0 8px}
-  .eyebrow{font-size:.74em; padding:7px 12px}
-  .cta-row{gap:10px; margin:16px 0 12px}
-  .btn.go-live{font-size:.84em; padding:11px 14px}
-  .limit-banner{font-size:.8em; padding:10px 12px}
-  .section{padding:22px 0}
-  .section-head h2{font-size:clamp(1.2rem, 4.5vw, 1.8rem); gap:8px}
-  .section-head h2 .num{width:36px; height:36px; font-size:.7em}
-  .card{border-radius:14px}
-  .card-head{padding:10px 12px; gap:8px}
-  .card-head h3{font-size:.95em}
-  .subnet{font-size:.72em; padding:4px 8px}
-  .scan-actions{padding:10px 12px 6px; gap:8px}
-  .manual-row{padding:8px 12px; gap:6px}
-  .manual-row input{min-width:100px; padding:9px 10px; font-size:.88em}
-  .bridge-row{margin:0 12px; padding:6px 8px; font-size:.76em}
-  .tv-list{padding:10px 12px 12px}
-  .tv-item{padding:10px; gap:10px; border-radius:12px}
-  .tv-icon{width:38px; height:38px; font-size:.85em}
-  .tv-item-name{font-size:.88em}
-  .tv-item-meta{font-size:.74em}
-  .tv-item-actions{gap:6px}
-  .connected-empty{padding:18px 12px}
-  .remote-panel{padding:10px 12px 12px; gap:10px}
-  .tv-info{padding:8px; gap:10px}
-  .tv-avatar{width:36px; height:36px}
-  .dpad-wrap{padding:8px; border-radius:12px}
-  .dpad{grid-template-columns:52px 52px 52px; grid-template-rows:52px 52px 52px; gap:5px}
-  .dpad-btn{width:52px; height:52px; border-radius:12px; font-size:.85em}
-  .dpad-label{font-size:.68em}
-  .quick-grid{grid-template-columns:1fr 1fr 1fr; gap:5px}
-  .qbtn{padding:8px 4px; font-size:.76em; border-radius:8px}
-  .field-row{gap:6px}
-  .field-row input{padding:9px 10px; font-size:.88em}
-  .fullscreen-trigger{padding:12px !important; font-size:1em !important}
-  .log{max-height:120px; font-size:.72em; padding:6px 8px}
-  .log .entry{padding:5px 6px; font-size:.85em}
-  .toast{max-width:calc(100vw - 32px); font-size:.82em; padding:8px 10px}
-  .modal{padding:14px}
-  .modal-card{padding:14px}
-  .pair-code{font-size:1.6em}
-  .fs-gesture-hud{font-size:.75em; padding:6px 12px; top:16px; right:16px}
-  #page-zones #exitZonesBtn{top:16px; left:16px}
-  #page-draw #exitDrawBtn{top:16px; left:16px}
-  .fs-draw-hud{padding:16px 12px}
-  .fs-draw-word{gap:16px; min-height:60px}
-  .fs-recognized-char{font-size:3rem; min-width:40px}
-  .fs-buffer{font-size:2rem}
-  .fs-draw-controls{gap:8px; flex-wrap:wrap; justify-content:center}
-  .hand-mini{width:150px; height:112px; top:50px; right:12px}
-  .gesture-status{padding:8px 10px; gap:6px}
-  .gs-item .k{font-size:.62em}
-  .gs-item .v{font-size:.82em}
-  .sliders{padding:10px 12px; gap:8px; font-size:.78em}
-  .sliders input[type="range"]{min-width:110px}
-  .info-card{padding:12px}
-  .steps{font-size:.82em; gap:4px}
-  .dpad-mini{padding:8px; gap:4px}
-  .mini-btn{width:38px; height:38px; font-size:.75em}
-  .tip{font-size:.78em; padding:8px 10px}
-  .keyboard-fallback{padding:8px 10px}
-  .footer{padding:16px 0}
-  .footer-grid{font-size:.78em}
-  .video-placeholder{padding:14px}
-  .zone-label{font-size:.58em; padding:3px 5px}
+  .nav-inner{padding:10px 14px; flex-wrap:nowrap}
+  .brand-text{font-size:.88em}
+  .brand-icon{width:32px; height:32px; font-size:16px}
+  .conn-pill{padding:6px 10px; font-size:.72em; max-width:140px}
+  .conn-pill span:last-child{max-width:70px}
+  .theme-btn,.hamburger{width:34px; height:34px; flex-shrink:0}
+  .hero{padding:16px 12px 12px}
+  .hero-grid{gap:16px}
+  h1{font-size:clamp(1.4rem, 7vw, 2.2rem); margin:8px 0 6px}
+  .eyebrow{font-size:.72em; padding:6px 10px}
+  .cta-row{gap:8px; margin:14px 0 10px; flex-wrap:wrap}
+  .cta-row .btn{flex:1; min-width:120px; justify-content:center}
+  .btn.go-live{font-size:.82em; padding:10px 12px}
+  .limit-banner{font-size:.78em; padding:8px 10px; line-height:1.4}
+  .section{padding:20px 0}
+  .section-head h2{font-size:clamp(1.1rem, 4.5vw, 1.6rem); gap:8px}
+  .section-head h2 .num{width:32px; height:32px; font-size:.68em}
+  .card{border-radius:12px; overflow:hidden}
+  .card-head{padding:8px 10px; gap:6px; flex-wrap:wrap}
+  .card-head h3{font-size:.9em}
+  .subnet{font-size:.7em; padding:3px 6px}
+  .scan-actions{padding:8px 10px 4px; gap:6px; flex-wrap:wrap}
+  .scan-actions .btn{font-size:.8em}
+  .manual-row{padding:6px 10px; gap:5px; flex-wrap:wrap}
+  .manual-row input{min-width:0; flex:1 1 100px; padding:8px 8px; font-size:.85em}
+  .bridge-row{margin:0 10px; padding:5px 7px; font-size:.72em; flex-wrap:wrap}
+  .tv-list{padding:8px 10px 10px}
+  .tv-item{padding:8px; gap:8px; border-radius:10px; flex-wrap:wrap}
+  .tv-icon{width:34px; height:34px; font-size:.8em}
+  .tv-item-main{min-width:0}
+  .tv-item-name{font-size:.84em}
+  .tv-item-meta{font-size:.7em}
+  .tv-item-actions{gap:5px}
+  .connectBtn{font-size:.75em; padding:6px 8px}
+  .connected-empty{padding:14px 10px}
+  .remote-panel{padding:8px 10px 10px; gap:8px}
+  .tv-info{padding:7px; gap:8px; flex-wrap:wrap}
+  .tv-avatar{width:32px; height:32px}
+  .dpad-wrap{padding:6px; border-radius:10px}
+  .dpad{grid-template-columns:48px 48px 48px; grid-template-rows:48px 48px 48px; gap:4px}
+  .dpad-btn{width:48px; height:48px; border-radius:10px; font-size:.82em}
+  .dpad-label{font-size:.65em; padding:4px}
+  .quick-grid{grid-template-columns:1fr 1fr 1fr; gap:4px}
+  .qbtn{padding:7px 3px; font-size:.72em; border-radius:6px}
+  .field-row{flex-wrap:wrap; gap:5px}
+  .field-row input{flex:1 1 100%; padding:8px 8px; font-size:.85em}
+  .field-row .btn{flex:0 0 auto}
+  .fullscreen-trigger{padding:10px !important; font-size:.92em !important}
+  .log{max-height:100px; font-size:.68em; padding:5px 6px}
+  .log .entry{padding:4px 5px; font-size:.82em}
+  .toast{max-width:calc(100vw - 24px); font-size:.78em; padding:7px 9px; right:12px; bottom:12px}
+  .modal{padding:12px}
+  .modal-card{padding:12px}
+  .pair-inputs{gap:5px}
+  .pair-inputs input{font-size:1.1em}
+  .pair-code{font-size:1.4em; letter-spacing:.25em}
+  .fs-gesture-hud{font-size:.7em; padding:5px 10px; top:12px; right:12px; max-width:calc(100vw - 80px)}
+  #page-zones #exitZonesBtn{top:12px; left:12px}
+  #page-draw #exitDrawBtn{top:12px; left:12px}
+  .fs-draw-hud{padding:12px 8px}
+  .fs-draw-word{gap:12px; min-height:50px}
+  .fs-recognized-char{font-size:2.4rem; min-width:36px}
+  .fs-buffer{font-size:1.6rem}
+  .fs-draw-controls{gap:6px; flex-wrap:wrap; justify-content:center}
+  .hand-mini{width:120px; height:90px; top:40px; right:8px}
+  .gesture-status{padding:6px 8px; gap:4px; grid-template-columns:1fr 1fr}
+  .gs-item .k{font-size:.58em}
+  .gs-item .v{font-size:.76em}
+  .sliders{padding:8px 10px; gap:6px; font-size:.74em}
+  .sliders label{gap:6px}
+  .sliders input[type="range"]{min-width:90px}
+  .info-card{padding:10px}
+  .steps{font-size:.78em; gap:3px}
+  .dpad-mini{padding:6px; gap:3px}
+  .mini-btn{width:34px; height:34px; font-size:.7em}
+  .tip{font-size:.74em; padding:7px 8px}
+  .keyboard-fallback{padding:7px 8px}
+  .footer{padding:14px 0}
+  .footer-grid{font-size:.72em; flex-direction:column; gap:6px; text-align:center}
+  .footer-links{display:flex; gap:12px; justify-content:center}
+  .video-placeholder{padding:12px}
+  .video-placeholder .ph-icon{font-size:24px}
+  .zone-label{font-size:.55em; padding:2px 4px}
+  .explain{padding:10px 12px}
+  .tv-mock{border-radius:14px}
+  [style*="display:flex"][style*="flex-wrap:wrap"]{flex-wrap:wrap !important}
 }
 
 /* Very small phones */
 @media(max-width:380px){
-  .hero{padding:14px 10px 10px}
-  .container{padding:0 10px}
-  h1{font-size:1.5rem}
-  .eyebrow{font-size:.7em; padding:6px 10px}
-  .btn{padding:10px 12px; font-size:.86em}
-  .card-head{padding:8px 10px}
-  .tv-item{padding:8px}
-  .dpad{grid-template-columns:46px 46px 46px; grid-template-rows:46px 46px 46px; gap:4px}
-  .dpad-btn{width:46px; height:46px; font-size:.8em}
-  .quick-grid{gap:4px}
-  .qbtn{padding:7px 3px; font-size:.72em}
-  .fs-draw-word{min-height:48px}
-  .fs-recognized-char{font-size:2.4rem}
-  .fs-buffer{font-size:1.6rem}
+  .hero{padding:12px 8px 8px}
+  .container{padding:0 8px}
+  h1{font-size:1.3rem}
+  .eyebrow{font-size:.65em; padding:5px 8px}
+  .btn{padding:8px 10px; font-size:.82em}
+  .card-head{padding:6px 8px}
+  .tv-item{padding:6px; gap:6px}
+  .dpad{grid-template-columns:42px 42px 42px; grid-template-rows:42px 42px 42px; gap:3px}
+  .dpad-btn{width:42px; height:42px; font-size:.75em}
+  .quick-grid{gap:3px}
+  .qbtn{padding:6px 2px; font-size:.68em}
+  .fs-draw-word{min-height:42px}
+  .fs-recognized-char{font-size:2rem}
+  .fs-buffer{font-size:1.3rem}
+  .nav-links{font-size:.82em}
+  .pair-inputs{gap:4px}
+  .pair-inputs input{font-size:1em}
 }
 
 /* Landscape on mobile — make zones bigger for gestures */
@@ -1589,3 +1618,10 @@ pre{
   .fs-draw-hud{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
   .fs-gesture-hud{right:calc(16px + env(safe-area-inset-right))}
 }
+
+/* General overflow fix for all cards on mobile */
+.card{overflow:hidden}
+.scan-actions{flex-wrap:wrap; gap:8px}
+.card-head{flex-wrap:wrap; gap:8px}
+.tv-item{overflow:hidden}
+.field-row{flex-wrap:wrap}
