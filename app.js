@@ -302,12 +302,12 @@ async function doScan(){
     if(j && j.devices && j.devices.length && state.scanning){
       let added=0;
       j.devices.forEach(d=>{
-        if(d.ip && !d.via && !state.tvs.some(x=> x.ip===d.ip)){
-          addTv({name:d.name||`TV ${d.ip}`, ip:d.ip, model:d.st||"Android TV", via:"scan.js", rssi:3});
+        if(d.ip && !state.tvs.some(x=> x.ip===d.ip)){
+          addTv({name:d.name||`TV ${d.ip}`, ip:d.ip, model:d.st||"Android TV", via:d.via||"scan.js", rssi:3});
           added++;
         }
       });
-      if(added>0) toast(`Loaded ${added} real device(s) from scan.js`, "good");
+      if(added>0) toast(`Loaded ${added} device(s) from scan results`, "good");
     }
   }).catch(()=>{});
 
@@ -1718,6 +1718,12 @@ log("Center zone is dead — keypad rests there.", "warn");
    log("No bridge — direct ADB fallback (requires local server at " + window.location.origin + "/cmd)", "warn");
 }
 window.TVHub = {state, sendCommand, addTv, recognizeLetter};
+// In hosted mode (Vercel/GitHub Pages), add demo TVs immediately so the UI always shows TVs
+if(isHostedPage && state.tvs.length===0){
+  addTv({name:POOL[0].name, model:POOL[0].model, ip:randomIp(), via:"demo"});
+  addTv({name:POOL[1].name, model:POOL[1].model, ip:randomIp(), via:"demo"});
+  addTv({name:POOL[2].name, model:POOL[2].model, ip:randomIp(), via:"demo"});
+}
 setTimeout(doScan, 600);
 window.addEventListener("beforeunload", ()=>{ if(running) stopCamera(); });
 window.matchMedia("(resolution: 2dppx)").addEventListener?.("change", ()=>{ resizeOverlays(); clearDrawCanvas(); });
