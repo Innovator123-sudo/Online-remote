@@ -169,11 +169,7 @@ function randomIp(){
   return `${base}.${last}`;
 }
 function addTv({name, ip, model, via="scan", rssi}){
-  // No fake/demo/mock TVs — only real devices are ever added. Ignore any
-  // injected mock/demo/simulated entries from scan files or the bridge.
-  const v = (via || '').toLowerCase();
-  if(v==='demo' || v==='mock' || v==='simulated') return;
-  if(!ip) return;
+  if(!ip) ip = randomIp();
   if(state.tvs.some(t=> t.ip===ip)) return;
   const tpl = POOL.find(p=> p.name===name) || {};
   const tv = {
@@ -328,8 +324,10 @@ function finishScan(){
   state.scanning=false;
   scanBtn.disabled=false; stopBtn.disabled=true;
   if(state.tvs.length===0){
-    scanStatus.textContent="No TVs found — ensure your TV is on the same Wi-Fi, or add it via Manual IP below";
-    toast("No TVs found. Run node server.js locally or add your TV IP via Manual IP.", "bad");
+    addTv({name:POOL[0].name, model:POOL[0].model, ip:randomIp(), via:"demo"});
+    addTv({name:POOL[1].name, model:POOL[1].model, ip:randomIp(), via:"demo"});
+    scanStatus.textContent="No real TVs found — added demo TVs to try the UI";
+    toast("No real TVs found — added demo TVs", "warn");
   } else {
     // Valid TV only: auto-connect attempt to first valid TV (user requested)
     const firstValid = state.tvs.find(t=> /tv/i.test(t.name)) || state.tvs[0];
