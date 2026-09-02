@@ -437,9 +437,31 @@ function initiateConnect(tv){
   const pcd = $("#pairCodeDisplay");
   if(pcd) pcd.textContent = currentPairCode.split("").join(" ");
   const copyBtn = $("#copyPairCodeBtn");
-  if(copyBtn) copyBtn.onclick = ()=>{
-    navigator.clipboard && navigator.clipboard.writeText(currentPairCode).then(()=>toast("Code copied","good")).catch(()=>{});
-  };
+    if(copyBtn) copyBtn.onclick = ()=>{
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(currentPairCode).then(()=>toast("Code copied","good")).catch(()=>toast("Copy failed — use below","warn"));
+        } else {
+          throw new Error("clipboard not available");
+        }
+      }catch{
+        // Fallback: select the code text so user can copy manually
+        const pcd = $("#pairCodeDisplay");
+        if(pcd){
+          const range = document.createRange();
+          range.selectNodeContents(pcd);
+          const sel = window.getSelection();
+          if(sel){ sel.removeAllRanges(); sel.addRange(range); }
+          try{
+            document.execCommand("copy");
+            toast("Code copied (fallback)","good");
+          }catch{
+            toast("Code: " + currentPairCode + " — copy manually","warn");
+          }
+          if(sel){ sel.removeAllRanges(); }
+        }
+      }
+    };
   pairModal.classList.remove("hidden");
   const inputs = $$("#pairInputs input");
   inputs.forEach((inp,i)=>{
