@@ -50,6 +50,21 @@ function toast(msg, type="") {
   setTimeout(()=> el.style.opacity="0", 2200);
   setTimeout(()=> el.remove(), 2600);
 }
+
+const cmdLogEl = $("#cmdLog");
+const logEntries=[];
+function log(msg, type=""){
+  const e = {msg, type, t: new Date().toLocaleTimeString()};
+  logEntries.unshift(e);
+  if(logEntries.length>60) logEntries.pop();
+  renderLog();
+}
+function renderLog(){
+  if(!cmdLogEl) return;
+  cmdLogEl.innerHTML = logEntries.map(e=>`<div class="entry ${e.type}"><span>${e.msg}</span><span style="opacity:.6">${e.t}</span></div>`).join("") || `<div class="muted" style="padding:8px">No commands yet.</div>`;
+}
+const clearLogBtn = $("#clearLogBtn");
+if(clearLogBtn) clearLogBtn.onclick = ()=>{ logEntries.length=0; renderLog(); };
 function uid(){ return Math.random().toString(36).slice(2,8).toUpperCase(); }
 function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
 function now(){ return performance.now(); }
@@ -570,19 +585,7 @@ $("#searchToggle").onchange = (e)=>{
     fetchBridge("/search", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ip: state.connected.ip, active: state.searchActive})}).catch(()=>{});
   }
 };
-const cmdLogEl = $("#cmdLog");
-const logEntries=[];
-function log(msg, type=""){
-  const e = {msg, type, t: new Date().toLocaleTimeString()};
-  logEntries.unshift(e);
-  if(logEntries.length>60) logEntries.pop();
-  renderLog();
-}
-function renderLog(){
-  if(!cmdLogEl) return;
-  cmdLogEl.innerHTML = logEntries.map(e=>`<div class="entry ${e.type}"><span>${e.msg}</span><span style="opacity:.6">${e.t}</span></div>`).join("") || `<div class="muted" style="padding:8px">No commands yet.</div>`;
-}
-$("#clearLogBtn").onclick = ()=>{ logEntries.length=0; renderLog(); };
+
 async function sendCommand(cmd, payload=""){
   if(!state.connected){
     toast("Not connected to any TV — scanning first", "bad");
