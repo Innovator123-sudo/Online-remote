@@ -181,8 +181,8 @@ async function main(){
   } else {
     tv = await discoverTv(3200);
     if(!tv){
-      log('No TV found via SSDP/bridge. Using demo TV 192.168.1.101');
-      tv = {ip:'192.168.1.101', name:'Living Room TV (demo)', via:'demo'};
+      log('No TV found via SSDP/bridge on this network. Ensure TV and PC are on the SAME Wi-Fi, then run again. (No demo fallback — real control only.)');
+      process.exit(2);
     } else {
       log(`Found TV: ${tv.name} ${tv.ip} [${tv.via}]`);
     }

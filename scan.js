@@ -25,12 +25,14 @@ const getArg = (k, def) => {
 const TIMEOUT = parseInt(getArg('--timeout', '3800'), 10); // <5s total, 3.8s reliable + fast
 const VERBOSE = args.includes('--verbose');
 const MANUAL_SUBNET = getArg('--subnet', null);
-const NAME_FILTER = (getArg('--filter', getArg('--name', 'tv')) || 'tv').toLowerCase(); // search device name tv
+const NAME_FILTER = (getArg('--filter', getArg('--name', 'tv')) || 'tv').toLowerCase(); // search device name tv / cast
 
 function log(...a){ console.log(...a); }
 function vlog(...a){ if(VERBOSE) console.log('[verbose]', ...a); }
 
-// Fetch real device name from SSDP LOCATION XML (friendlyName / modelName)
+// Fetch real device name from SSDP LOCATION XML (friendlyName / modelName),
+// and for Chromecast also probe the /setup/eureka_info Cast endpoint which
+// returns the true user-set name (e.g. "Living Room", "Google Nest Hub").
 function fetchFriendlyName(locationUrl, timeout=1500) {
   return new Promise((resolve) => {
     try {
@@ -47,6 +49,56 @@ function fetchFriendlyName(locationUrl, timeout=1500) {
       req.on('error', () => resolve(''));
       req.on('timeout', () => { try { req.destroy(); } catch{}; resolve(''); });
     } catch { resolve(''); }
+  });
+}
+
+// For Chromecast/Google Cast devices, the DIAL device description may only
+// report the model, not the user-set name. Probe the Cast eureka_info endpoint
+// which returns the actual friendly name chosen by the user -> "Living Room".
+function fetchCastName(ip, timeout=1400) {
+  return new Promise((resolve) => {
+    const url = `http://${ip}:8008/setup/eureka_info?params=name,model_name,ssdp_udn`;
+    const req = http.get(url, { timeout }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          const name = (j && j.name) ? String(j.name).trim() : '';
+          resolve(name);
+        } catch { resolve(''); }
+      });
+    });
+    req.on('error', () => resolve(''));
+    req.on('timeout', () => { try { req.destroy(); } catch{}; resolve(''); });
+  });
+}
+
+// Decide the best display name: prefer a real user-set Cast name, otherwise the
+// DIAL friendlyName, otherwise a model-based label. Never pick an empty/generic value over a specific one.
+function enrichDeviceName(ip, server, st, currentName, locationUrl) {
+  return new Promise((resolve) => {
+    const isCast = /chromecast|google|cast/i.test((server||'') + ' ' + (st||''));
+    const applyCastName = () => {
+      if(!isCast){ resolve(currentName); return; }
+      fetchCastName(ip, 1400).then(castName => {
+        if(castName && castName.toLowerCase() !== 'tv'){
+          resolve(castName.slice(0,40));
+        } else {
+          // fall back to DIAL XML friendlyName
+          if(locationUrl){
+            fetchFriendlyName(locationUrl, 1400).then(xmlName => {
+              if(xmlName && xmlName.toLowerCase() !== 'tv' && !/^chromecast$/i.test(xmlName)){
+                resolve(xmlName.slice(0,40));
+              } else {
+                resolve(currentName);
+              }
+            }).catch(()=> resolve(currentName));
+          } else resolve(currentName);
+        }
+      }).catch(()=> resolve(currentName));
+    };
+    applyCastName();
   });
 }
 
@@ -113,21 +165,18 @@ async function ssdpScan(timeout = TIMEOUT){
     const finish = ()=>{
       if(finished) return; finished=true;
       try{ socket.close(); }catch{}
-      // Enrich each found device with real friendlyName from LOCATION XML (parallel)
+      // Enrich each found device with real friendlyName from Cast eureka_info / DIAL XML (parallel)
       for(const [ip, info] of found){
-        if(info.location){
-          nameFetches.push(
-            fetchFriendlyName(info.location, 1500).then(realName => {
-              if(realName && found.has(ip)){
-                const dev = found.get(ip);
-                const oldName = dev.name;
-                dev.name = realName.slice(0,40);
-                if(!/tv|chromecast|cast|dongle/i.test(dev.name)) dev.name = `${dev.name} TV`;
-                log(`  → enriched ${ip}: "${oldName}" → "${dev.name}"`);
-              }
-            }).catch(()=>{})
-          );
-        }
+        nameFetches.push(
+          enrichDeviceName(ip, info.server, info.st, info.name, info.location).then(realName => {
+            if(realName && found.has(ip)){
+              const dev = found.get(ip);
+              const oldName = dev.name;
+              dev.name = realName;
+              if(oldName !== dev.name) log(`  → enriched ${ip}: "${oldName}" → "${dev.name}"`);
+            }
+          }).catch(()=>{})
+        );
       }
       Promise.allSettled(nameFetches).then(()=> resolve(Array.from(found.values())));
     };
@@ -290,13 +339,15 @@ async function main(){
   log('');
 
   let all = Array.from(merged.values());
-  // Filter by device name tv (user requested: search device name tv)
+  // Filter by device name / ST — matches "tv" OR "cast"/"chromecast" so pure
+  // Chromecast dongles (e.g. "Google Nest Hub") are NOT hidden like before.
   const beforeFilter = all.length;
   all = all.filter(d=>{
     const hay = `${d.name} ${d.st||''} ${d.server||''} ${d.location||''}`.toLowerCase();
+    if(NAME_FILTER==='tv') return /tv|cast|chromecast|android|google/.test(hay);
     return hay.includes(NAME_FILTER);
   });
-  if(beforeFilter !== all.length) log(`  Filtered by device name "${NAME_FILTER}": ${beforeFilter} → ${all.length}`);
+  if(beforeFilter !== all.length) log(`  Filtered by "${NAME_FILTER}": ${beforeFilter} → ${all.length}`);
 
   log('─────────────────────────────────────────────');
   if(all.length===0){

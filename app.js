@@ -339,16 +339,16 @@ function finishScan(){
   state.scanning=false;
   scanBtn.disabled=false; stopBtn.disabled=true;
   if(state.tvs.length===0){
-    addTv({name:POOL[0].name, model:POOL[0].model, ip:randomIp(), via:"demo"});
-    addTv({name:POOL[1].name, model:POOL[1].model, ip:randomIp(), via:"demo"});
-    scanStatus.textContent="No real TVs found — added demo TVs to try the UI";
-    toast("No real TVs found — added demo TVs", "warn");
+    // NO fakes — real control is only possible with a real device found on the SAME Wi-Fi.
+    scanStatus.textContent="No real device found on this Wi-Fi. Make sure the TV and this PC are on the SAME network, then scan again.";
+    toast("No real TV found on same Wi-Fi — add it via Manual IP", "warn");
   } else {
-    // Valid TV only: auto-connect attempt to first valid TV (user requested)
-    const firstValid = state.tvs.find(t=> /tv/i.test(t.name)) || state.tvs[0];
-    scanStatus.textContent=`Found ${state.tvs.length} valid TV(s) • Wi-Fi OK — auto-connecting to ${firstValid.name}…`;
-    toast(`Found ${state.tvs.length} valid TV(s) — auto-connecting to ${firstValid.name}`, "good");
-    // Auto-connect attempt (no API key needed, local SSDP) — will show Pair modal if not yet paired
+    // Real device found — auto-connect to the first REAL device (Chromecast or Android TV)
+    const realDevices = state.tvs.filter(t=> t.via !== "demo");
+    const firstValid = (realDevices.length ? realDevices[0] : state.tvs[0]);
+    scanStatus.textContent=`Found ${realDevices.length||state.tvs.length} real device(s) on this Wi-Fi • auto-connecting to ${firstValid.name}…`;
+    toast(`Found ${state.tvs.length} real device(s) — auto-connecting to ${firstValid.name}`, "good");
+    // Auto-connect attempt (local SSDP) — will show Pair modal if not yet paired
     if(!state.connected){
       setTimeout(()=> {
         if(!state.connected) initiateConnect(firstValid);
@@ -1734,12 +1734,10 @@ if(state.bridge){
   log("No bridge — direct ADB fallback (requires local server at " + window.location.origin + "/cmd)", "warn");
 }
 window.TVHub = {state, sendCommand, addTv, recognizeLetter};
-// In hosted mode (Vercel/GitHub Pages), add demo TVs immediately so the UI always shows TVs
-if(isHostedPage && state.tvs.length===0){
-  addTv({name:POOL[0].name, model:POOL[0].model, ip:randomIp(), via:"demo"});
-  addTv({name:POOL[1].name, model:POOL[1].model, ip:randomIp(), via:"demo"});
-  addTv({name:POOL[2].name, model:POOL[2].model, ip:randomIp(), via:"demo"});
-}
+// Real control requires the local server: when hosted (GitHub Pages/Vercel) the
+// server's network is NOT the user's home Wi-Fi, so a hosted page can never reach
+// a real TV on the user's LAN. We deliberately add NO fakes. Run `node server.js`
+// locally and open http://localhost:5000 to discover + control your real TV.
 setTimeout(doScan, 600);
 window.addEventListener("beforeunload", ()=>{ if(running) stopCamera(); });
 window.matchMedia("(resolution: 2dppx)").addEventListener?.("change", ()=>{ resizeOverlays(); clearDrawCanvas(); });

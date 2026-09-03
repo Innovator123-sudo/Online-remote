@@ -79,6 +79,45 @@ function buildDeviceName(server, st, location, fallbackIp) {
   return name.replace(/UPnP\/.*/,'').trim() || `TV ${fallbackIp}`;
 }
 
+// For Chromecast/Google Cast devices, probe /setup/eureka_info for the real user-set name.
+function fetchCastName(ip, timeout=1400) {
+  return new Promise((resolve) => {
+    const url = `http://${ip}:8008/setup/eureka_info?params=name,model_name,ssdp_udn`;
+    const req = http.get(url, { timeout }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { const j = JSON.parse(data); resolve((j && j.name) ? String(j.name).trim() : ''); }
+        catch { resolve(''); }
+      });
+    });
+    req.on('error', () => resolve(''));
+    req.on('timeout', () => { try { req.destroy(); } catch{}; resolve(''); });
+  });
+}
+
+// Decide best display name — prefer user-set Cast name, then DIAL friendlyName, then model label.
+function enrichDeviceName(ip, server, st, currentName, locationUrl) {
+  return new Promise((resolve) => {
+    const isCast = /chromecast|google|cast/i.test((server||'') + ' ' + (st||''));
+    const applyCastName = () => {
+      if(!isCast){ resolve(currentName); return; }
+      fetchCastName(ip, 1400).then(castName => {
+        if(castName && castName.toLowerCase() !== 'tv'){
+          resolve(castName.slice(0,40));
+        } else if(locationUrl){
+          fetchFriendlyName(locationUrl, 1400).then(xmlName => {
+            if(xmlName && xmlName.toLowerCase() !== 'tv' && !/^chromecast$/i.test(xmlName)){
+              resolve(xmlName.slice(0,40));
+            } else resolve(currentName);
+          }).catch(()=> resolve(currentName));
+        } else resolve(currentName);
+      }).catch(()=> resolve(currentName));
+    };
+    applyCastName();
+  });
+}
+
 function findAdbBin(){
   const candidates = [
     path.join(__dirname, '..', 'platform-tools', process.platform==='win32'?'adb.exe':'adb'),
@@ -131,21 +170,18 @@ function rawSsdpScan(timeout=2200){
     const finish=()=>{
       if(finished) return; finished=true;
       try{ socket.close(); }catch{}
-      // Enrich names from device description XML (parallel, max 1500ms)
+      // Enrich names from Cast eureka_info / DIAL XML (parallel, max ~1500ms)
       for(const [ip, info] of found){
-        if(info.location){
-          nameFetches.push(
-            fetchFriendlyName(info.location, 1500).then(realName => {
-              if(realName && found.has(ip)){
-                const dev = found.get(ip);
-                const oldName = dev.name;
-                dev.name = realName.slice(0,40);
-                if(!/tv|chromecast|cast|dongle/i.test(dev.name)) dev.name = `${dev.name} TV`;
-                if(oldName !== dev.name) console.log(`[ssdp-raw] enriched ${ip}: "${oldName}" → "${dev.name}"`);
-              }
-            }).catch(()=>{})
-          );
-        }
+        nameFetches.push(
+          enrichDeviceName(ip, info.server, info.st, info.name, info.location).then(realName => {
+            if(realName && found.has(ip)){
+              const dev = found.get(ip);
+              const oldName = dev.name;
+              dev.name = realName.slice(0,40);
+              if(oldName !== dev.name) console.log(`[ssdp-raw] enriched ${ip}: "${oldName}" → "${dev.name}"`);
+            }
+          }).catch(()=>{})
+        );
       }
       Promise.allSettled(nameFetches).then(()=>{
         for(const [ip,info] of found){
@@ -221,19 +257,16 @@ async function ssdpScan(){
             name = name.replace(/UPnP.*/,'').trim() || `TV ${rinfo.address}`;
             discovered.push({ name: name.slice(0,40), ip:rinfo.address, model:st||'Android TV', via:'ssdp', location });
             console.log(`[ssdp] Found: ${name} at ${rinfo.address}`);
-            if(location) {
-              fetchFriendlyName(location, 1500).then(realName => {
-                if(realName) {
-                  const dev = discovered.find(d => d.ip === rinfo.address);
-                  if(dev) {
-                    const old = dev.name;
-                    dev.name = realName.slice(0,40);
-                    if(!/tv|chromecast|cast/i.test(dev.name)) dev.name = `${dev.name} TV`;
-                    console.log(`[ssdp] enriched ${rinfo.address}: "${old}" → "${dev.name}"`);
-                  }
+            enrichDeviceName(rinfo.address, server, st, name, location).then(realName => {
+              if(realName && realName !== name) {
+                const dev = discovered.find(d => d.ip === rinfo.address);
+                if(dev) {
+                  const old = dev.name;
+                  dev.name = realName.slice(0,40);
+                  console.log(`[ssdp] enriched ${rinfo.address}: "${old}" → "${dev.name}"`);
                 }
-              }).catch(()=>{});
-            }
+              }
+            }).catch(()=>{});
           }
         }
       });
