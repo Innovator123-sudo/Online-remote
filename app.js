@@ -563,6 +563,11 @@ $("#disconnectBtn").onclick = disconnect;
 (function(){
   const ip = localStorage.getItem("connectedIp");
   if(ip){
+    // On the hosted site we can't reach a real TV; don't auto-reconnect a remembered IP.
+    if(isHostedPage){
+      localStorage.removeItem("connectedIp");
+      return;
+    }
     const prefix = ip.split('.').slice(0,3).join('.');
     if(state.subnet && prefix === state.subnet){
       addTv({name:"Previous TV", ip, model:"Android TV", via:"remembered", rssi:3});
@@ -587,6 +592,19 @@ $("#searchToggle").onchange = (e)=>{
   }
 };
 
+// Hosted (https) pages like GitHub Pages CANNOT reach the local server because the
+// browser blocks http://localhost from https (mixed content), and the cloud isn't on
+// the user's Wi-Fi. Detect this up front so we give one clear message instead of
+// spamming the log with failed connection attempts.
+let _bridgeUnreachableShown = false;
+function warnHostedNoBridge(){
+  if(_bridgeUnreachableShown) return;
+  _bridgeUnreachableShown = true;
+  const msg = "You are on the hosted site, which can't reach your TV.\nRun \"node server.js\" on your PC and open http://localhost:5000 (same Wi-Fi) to control your real TV.";
+  toast("Control needs local server — open http://localhost:5000", "bad");
+  log(msg, "bad");
+}
+
 async function sendCommand(cmd, payload=""){
   if(!state.connected){
     toast("Not connected to any TV — scanning first", "bad");
@@ -600,17 +618,16 @@ async function sendCommand(cmd, payload=""){
     toast(`Search inactive: "${payload}" buffered, not sent`, "bad");
     return;
   }
-  log(`${cmd}${payload?` → ${payload}`:""}`, "good");
-  toast(`${cmd}${payload?` ${payload}`:""} → ${state.connected.name}`);
-
-  // Hosted demo mode: if connected TV is a demo TV on GitHub Pages / Vercel
-  // there is no backend — simulate the command locally with visual feedback
-  if(isHostedPage && state.connected.via === "demo"){
-    log(`[Demo] ${cmd}${payload?` "${payload}"`:""} simulated on ${state.connected.name}`, "good");
-    const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
-    if(map[cmd]) flashZone(map[cmd]);
+  // On a hosted https page with no bridge, real control is impossible (mixed content
+  // blocks http://localhost AND the cloud isn't on the user's LAN). Give one clear
+  // message instead of trying localhost URLs that the browser will block.
+  if(isHostedPage && !state.bridge){
+    log(`${cmd} — can't send on hosted site (no local bridge)`, "warn");
+    warnHostedNoBridge();
     return;
   }
+  log(`${cmd}${payload?` → ${payload}`:""}`, "good");
+  toast(`${cmd}${payload?` ${payload}`:""} → ${state.connected.name}`);
 
   // Always use bridge mode for actual command delivery — direct TV HTTP fails with no-cors
   // The bridge/server.js handles real ADB communication on port 5555
@@ -641,6 +658,7 @@ async function sendCommand(cmd, payload=""){
   const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
   if(map[cmd]) flashZone(map[cmd]);
 }
+
 
 // Fallback direct ADB sender when bridge is unavailable.
 // Probes several local server URLs in order so it can reach `node server.js`

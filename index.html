@@ -255,13 +255,13 @@
 
 <section id="bridgeHelp" class="section alt small">
   <div class="container">
-    <h3>🔌 Optional local bridge for real discovery</h3>
-    <p>For true LAN scanning, run the tiny Node helper that does SSDP / mDNS and forwards commands to TVs via the Android Remote protocol / HTTP. The web page auto-connects to it.</p>
-<pre><code>npm install
-node bridge/server.js
-# bridge listens on http://localhost:3001
-# page will show: ● Bridge connected</code></pre>
-    <p class="muted">Without the bridge, direct IP control still works if your TV exposes ADB/Remote port (enable “Network Remote” / “Android TV Remote Service” on your TV) and you allow CORS or use the bridge as proxy.</p>
+    <h3>🚀 How to control your REAL TV (must be on same Wi-Fi)</h3>
+    <p>The GitHub Pages site <strong>cannot</strong> reach your TV (it's on your home Wi-Fi, not GitHub's cloud, and browsers block http from https). Run the server on your PC and open its local URL:</p>
+<pre><code>node server.js
+# then open in your browser:
+#   from this PC:    http://localhost:5000
+#   from your phone (same Wi-Fi): http://192.168.1.67:5000</code></pre>
+    <p class="muted">On your TV, enable <strong>ADB over network</strong> (Developer options → Network debugging) and note the IP/port (5555). The server discovers it via SSDP and controls it with ADB. Same Wi-Fi only — this is a hard network limit, not a bug.</p>
   </div>
 </section>
 
