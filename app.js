@@ -132,6 +132,30 @@ function errToastOnce(msg){
   _lastErrToastAt = t;
   toast(msg, "bad");
 }
+// Zero-touch boot: ?bridge=192.168.1.67 links (phone one-tap) auto-save the bridge;
+// ?autoconnect=1 runs the full chain hands-free: bridge → scan → validate → connect → pair.
+const bootParams = (()=>{ try{ return new URLSearchParams(location.search); }catch{ return new URLSearchParams(); } })();
+let bootAutoConnect = bootParams.get("autoconnect") === "1";
+try{
+  const qb = (bootParams.get("bridge")||"").trim().replace(/\/+$/,"");
+  if(qb){
+    let v = qb;
+    if(!v.startsWith("http")) v = "http://" + v;
+    if(!/:\d+$/.test(v)) v += ":5000";
+    if(/^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)){
+      bridgeBase = v;
+      try{ localStorage.setItem("bridgeBase", v); }catch{}
+    }
+  }
+}catch{}
+function copyText(txt, label){
+  const done = ()=> toast((label || "Link") + " copied — open it on the phone", "good");
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done).catch(()=> window.prompt("Copy this link:", txt));
+    } else window.prompt("Copy this link:", txt);
+  }catch{ try{ window.prompt("Copy this link:", txt); }catch{} }
+}
 
 const themeToggle = $("#themeToggle");
 if(localStorage.getItem("theme")) document.documentElement.setAttribute("data-theme", localStorage.getItem("theme"));
@@ -186,6 +210,25 @@ async function detectSubnet(){
 detectSubnet();
 
 let _bridgeToastShown = false;
+let _wasBridge = false;
+async function onBridgeUp(){
+  // Bridge just appeared (PC started / same Wi-Fi joined): re-check anything
+  // stuck "NOT Available" and auto-connect — still zero taps.
+  const stuck = state.tvs.filter(t=> t.invalid);
+  for(const tv of stuck){
+    try{
+      const v = await validateTv(tv);
+      tv.invalid = !v.ok;
+      if(v.ok){ tv._validated = true; if(v.via) tv.transport = v.via; }
+    }catch{}
+  }
+  if(stuck.length) renderTvs();
+  if(state.connected || state.scanning) return;
+  const ready = state.tvs.find(t=>{ try{ return t._validated && !t.invalid && t.ip === localStorage.getItem("savedTvIp"); }catch{ return false; } })
+    || state.tvs.find(t=> t._validated && !t.invalid);
+  if(ready) initiateConnect(ready, true);
+  else doScan();
+}
 async function checkBridge(){
   const row = $("#bridgeRow");
   const status = $("#bridgeStatus");
@@ -205,10 +248,12 @@ async function checkBridge(){
         }
       }catch{}
       renderBridgeIpRow();
+      if(!_wasBridge){ _wasBridge = true; onBridgeUp(); }
       return;
     }
   }
   state.bridge = false;
+  _wasBridge = false;
   if(row) row.classList.remove("connected");
   if(status) status.textContent = isHostedPage
     ? "○ Cloud page — type your home PC's LAN IP below (same Wi-Fi) for real TV control"
@@ -257,8 +302,30 @@ function renderBridgeIpRow(){
   };
   const hint = document.createElement("small");
   hint.style.cssText = "width:100%;opacity:.65";
-  hint.textContent = "Run node server.js on ONE home PC, then open this page on any phone/tab/laptop (same Wi-Fi) and save that PC's IP here once.";
+  hint.textContent = "Bridge auto-starts with Windows on this PC. Other devices just open a link below — no typing.";
   wrap.append(input, btn, hint);
+  // One-tap phone links: opening either auto-saves the bridge and auto-connects.
+  if(bridgeBase){
+    const host = bridgeBase.replace(/^https?:\/\//, "").split(":")[0];
+    const links = [
+      ["📱 This network", `${bridgeBase}/?autoconnect=1`],
+      ["☁️ Cloud page", `${location.origin}${location.pathname}?bridge=${host}&autoconnect=1`],
+    ];
+    links.forEach(([label, url])=>{
+      const row = document.createElement("div");
+      row.style.cssText = "width:100%;display:flex;gap:8px;align-items:center;background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:.82em;overflow:hidden";
+      const span = document.createElement("span");
+      span.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85";
+      span.textContent = `${label}: ${url}`;
+      span.title = url;
+      const cp = document.createElement("button");
+      cp.className = "btn small ghost";
+      cp.textContent = "Copy";
+      cp.onclick = ()=> copyText(url, label.trim() + " link");
+      row.append(span, cp);
+      wrap.append(row);
+    });
+  }
 }
 checkBridge();
 setInterval(checkBridge, 15000);
@@ -419,7 +486,7 @@ async function doScan(){
     finishScan();
   }, 2100); // total <2.5s guaranteed, well under 5s
 }
-function finishScan(){
+async function finishScan(){
   clearInterval(scanProgressTimer);
   clearTimeout(state.scanTimer);
   (state.demoTimers||[]).forEach(t=> clearTimeout(t));
@@ -432,16 +499,33 @@ function finishScan(){
     scanStatus.textContent="No real device found on this Wi-Fi. Make sure the TV and this PC are on the SAME network, then scan again.";
     toast("No real TV found on same Wi-Fi — add it via Manual IP", "warn");
   } else {
-    // Real device found — auto-connect to the first REAL device (Chromecast or Android TV)
+    // Zero-touch: validate EVERYTHING found (quiet, parallel), then auto-connect
+    // the best one — saved TV first, else the first answering TV. Pair modal
+    // auto-submits, so the user does nothing.
     const realDevices = state.tvs.filter(t=> t.via !== "demo");
-    const firstValid = (realDevices.length ? realDevices[0] : state.tvs[0]);
-    scanStatus.textContent=`Found ${realDevices.length||state.tvs.length} real device(s) on this Wi-Fi • auto-connecting to ${firstValid.name}…`;
-    toast(`Found ${state.tvs.length} real device(s) — auto-connecting to ${firstValid.name}`, "good");
-    // Auto-connect attempt (local SSDP) — will show Pair modal if not yet paired
-    if(!state.connected){
-      setTimeout(()=> {
-        if(!state.connected) initiateConnect(firstValid);
-      }, 400);
+    scanStatus.textContent=`Found ${realDevices.length||state.tvs.length} device(s) • checking which answer…`;
+    const results = await Promise.all((realDevices.length ? realDevices : state.tvs).map(async tv=>({tv, v: await validateTv(tv)})));
+    results.forEach(({tv, v})=>{
+      tv.invalid = !v.ok;
+      if(v.ok){ tv._validated = true; if(v.via) tv.transport = v.via; if(v.name && /^android tv$/i.test(tv.name)) tv.name = v.name; }
+    });
+    renderTvs();
+    const validOnes = results.filter(r=> r.v.ok).map(r=> r.tv);
+    if(validOnes.length === 0){
+      scanStatus.textContent="Found device(s) but none answered — wake the TV / confirm same Wi-Fi, then Rescan.";
+      errToastOnce("TVs seen but none answered — wake the TV and rescan");
+    } else {
+      let pick = validOnes[0];
+      try{
+        const saved = localStorage.getItem("savedTvIp");
+        const savedHit = saved && validOnes.find(t=> t.ip === saved);
+        if(savedHit) pick = savedHit;
+      }catch{}
+      scanStatus.textContent=`${validOnes.length} TV(s) answering • auto-connecting to ${pick.name}…`;
+      toast(`Auto-connecting to ${pick.name}`, "good");
+      if(!state.connected){
+        setTimeout(()=> { if(!state.connected) initiateConnect(pick, true); }, 400);
+      }
     }
   }
   setTimeout(()=> setScanProgress(0), 1200);
@@ -470,8 +554,9 @@ function sameSubnetAsMe(ip){
   if(!state.subnet) return true; // subnet not detected yet — don't block
   return ip.split(".").slice(0,3).join(".") === state.subnet;
 }
-// Legit-TV check: valid IPv4 + same /24 network + reachable via bridge /validate
-// (or a quick DIAL probe as fallback). Quiet — exactly ONE toast/log on failure.
+// Legit-TV check: valid IPv4 + same /24 network + answers via bridge /validate
+// (ADB full D-Pad > Chromecast media keys > DIAL app-quit). Quiet — exactly
+// ONE toast/log on failure, never per-probe spam.
 async function validateTv(tv){
   if(!isValidIpv4(tv.ip)) return {ok:false, reason:`"${tv.ip}" is not a valid IPv4 address`};
   if(!sameSubnetAsMe(tv.ip)){
@@ -479,11 +564,11 @@ async function validateTv(tv){
   }
   if(state.bridge){
     try{
-      const r = await fetchBridge(`/validate?ip=${encodeURIComponent(tv.ip)}`, {signal: AbortSignal.timeout(5000)});
+      const r = await fetchBridge(`/validate?ip=${encodeURIComponent(tv.ip)}`, {signal: AbortSignal.timeout(12000)});
       const t = await r.text();
       const j = t ? JSON.parse(t) : null;
-      if(j && j.valid) return {ok:true};
-      return {ok:false, reason:`${tv.ip} didn't answer ADB (enable Developer options → Network/USB debugging on the TV, port 5555).`};
+      if(j && j.valid) return {ok:true, via: j.via || 'adb', name: j.name || ''};
+      return {ok:false, reason:`${tv.ip} is quiet — TV off/asleep? Wake it, confirm same Wi-Fi, and (for full D-Pad) enable Developer options → Network debugging on the TV.`};
     }catch{
       return {ok:false, reason:`Bridge unreachable — is node server.js running + same Wi-Fi?`};
     }
@@ -559,16 +644,16 @@ function genPairCode(){
   do{ c = Math.floor(100000 + Math.random()*900000).toString(); }while(c==="000000");
   return c;
 }
-async function initiateConnect(tv){
+async function initiateConnect(tv, auto=false){
   if(tv.paired && state.connected && state.connected.ip===tv.ip){
-    toast("Already connected to "+tv.name);
+    if(!auto) toast("Already connected to "+tv.name);
     return;
   }
   // Legit + same-network gate: never "connect" to an unreachable/fake TV.
   // Shows exactly one checking message, then either proceeds or explains why not.
   if(!(tv.paired && tv._validated)){
-    toast(`Checking ${tv.name} (${tv.ip})…`);
-    scanStatus && (scanStatus.textContent = `Validating ${tv.ip}…`);
+    if(!auto) toast(`Checking ${tv.name} (${tv.ip})…`);
+    if(scanStatus) scanStatus.textContent = `Validating ${tv.ip}…`;
     const v = await validateTv(tv);
     if(!v.ok){
       tv.invalid = true;
@@ -579,10 +664,12 @@ async function initiateConnect(tv){
     }
     tv.invalid = false;
     tv._validated = true;
+    if(v.via) tv.transport = v.via;
+    if(v.name && (/^android tv$|^tv /i.test(tv.name) || tv.via === "saved")) tv.name = v.name;
     renderTvs();
   }
   if(tv.paired){
-    connectTv(tv);
+    connectTv(tv, !auto); // auto-flow stays on the remote panel (no jarring fullscreen)
     return;
   }
   pendingTv=tv;
@@ -631,6 +718,11 @@ async function initiateConnect(tv){
     };
   });
   setTimeout(()=> inputs[0].focus(), 60);
+  fillPairCode(currentPairCode); // the code is shown on screen — nothing to retype
+  clearTimeout(window._pairAutoT);
+  window._pairAutoT = setTimeout(()=>{ // zero-touch: submits by itself, Cancel still works
+    if(pendingTv && pairModal && !pairModal.classList.contains("hidden")) doPair();
+  }, 900);
 }
 function fillPairCode(code){
   const inputs = $$("#pairInputs input");
@@ -638,7 +730,7 @@ function fillPairCode(code){
 }
 const pairCancelEl = $("#pairCancel");
 if(pairCancelEl) pairCancelEl.onclick = closePair;
-function closePair(){ const pm=$("#pairModal"); if(pm) pm.classList.add("hidden"); pendingTv=null; }
+function closePair(){ clearTimeout(window._pairAutoT); const pm=$("#pairModal"); if(pm) pm.classList.add("hidden"); pendingTv=null; }
 const pairModalEl = $("#pairModal");
 if(pairModalEl) pairModalEl.addEventListener("click", (e)=>{ if(e.target===pairModalEl) closePair(); });
 async function doPair(){
@@ -695,8 +787,12 @@ function showConnected(){
   $("#tvAvatar").textContent = state.connected.icon;
   $("#tvName").textContent = state.connected.name;
   const isDemo = isHostedPage && state.connected.via === "demo";
-  $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.model} • Paired${isDemo ? ' • Demo Mode' : ''}`;
+  const tp = state.connected.transport;
+  const tpNote = tp === "cast" ? " • Cast media mode" : tp === "dial" ? " • Basic mode" : "";
+  $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.model} • Paired${isDemo ? ' • Demo Mode' : ''}${tpNote}`;
   renderLog();
+  if(tp === "cast") toast("Chromecast: OK = play/pause, Home = quit app, volume works (no D-Pad on Chromecast)", "good");
+  else if(tp === "dial") toast("Basic mode: Home/Back quit the running app. Wake TV + enable Network debugging for more.", "good");
 }
 function disconnect(){
   if(!state.connected) return;
@@ -786,8 +882,14 @@ async function sendCommand(cmd, payload=""){
       const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
       if(map[cmd]) flashZone(map[cmd]);
     } else {
-      log(`TV rejected ${cmd}: ${result.error || 'check ADB debugging on TV'}`, "bad");
-      errToastOnce(`TV rejected ${cmd} — check ADB on TV`);
+      const friendly = {
+        'cast-nodpad': "Chromecast has no D-Pad — use OK (play/pause), Home (quit app), volume",
+        'cast-unsupported': "Not on Chromecast — media keys only (OK, Home, volume)",
+        'dial-limited': "Basic TV — Home/Back quit the running app",
+      };
+      const msg = friendly[result.error] || `TV didn't take ${cmd}: ${result.error || 'wake the TV / check ADB debugging'}`;
+      log(msg, "bad");
+      errToastOnce(msg);
     }
   }catch(err){
     state.bridge = false;

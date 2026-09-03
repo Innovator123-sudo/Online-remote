@@ -19,6 +19,7 @@ const url = require('url');
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 const BRIDGE_PORT = 5001; // also listen on 5001 for backward compat (local only)
+const transport = require('./cast-transport'); // ADB + Chromecast Cast v2 + DIAL routing
 
 // Cloud deployment configuration
 const config = {
@@ -351,7 +352,7 @@ function handleApi(req, res){
 
   if(p==='/status' || p==='/api/status'){
     res.writeHead(200, {'Content-Type':'application/json'});
-    res.end(JSON.stringify({ ok:true, bridge:true, tvs: discovered, states: Object.fromEntries(states) }));
+    res.end(JSON.stringify({ ok:true, bridge:true, tvs: discovered, states: Object.fromEntries(states), transports:{adb:true, cast:transport.castAvailable()} }));
     return true;
   }
   if(p==='/scan' || p==='/api/scan'){
@@ -379,9 +380,11 @@ function handleApi(req, res){
       return res.end(JSON.stringify({ok:false, valid:false, error:'no ip'}));
     }
     res.writeHead(200, {'Content-Type':'application/json'});
-    sendAdb(ip, ['shell','echo','test']).then(isValid=>{
-      console.log(`[validate] ${ip} → ${isValid?'valid':'invalid'}`);
-      res.end(JSON.stringify({ok:true, valid:isValid, via:'adb'}));
+    // Transport-aware: ADB (full D-Pad) > Cast (Chromecast media keys) > DIAL (app quit).
+    transport.validateTransport(ip, ()=> sendAdb(ip, ['shell','echo','test'])).then(v=>{
+      console.log(`[validate] ${ip} → ${v.valid ? ('valid via '+v.via) : 'invalid'}${v.name ? ' "'+v.name+'"' : ''}`);
+      if(v.valid) transport.setDeviceVia(ip, v.via);
+      res.end(JSON.stringify({ok:true, valid:v.valid, via:v.via || undefined, name:v.name || undefined}));
     }).catch(err=>{
       res.end(JSON.stringify({ok:true, valid:false, error:err.message||String(err)}));
     });
@@ -411,19 +414,23 @@ function handleApi(req, res){
         console.error(`[cmd] Timeout for ${body.ip} ${body.cmd}`);
         if(!res.writableEnded){
           res.writeHead(504, {'Content-Type':'application/json'});
-          res.end(JSON.stringify({ok:false, sent:false, via:'adb', error:'command timeout'}));
+          res.end(JSON.stringify({ok:false, sent:false, via:transport.getDeviceVia(body.ip), error:'command timeout'}));
         }
-      }, 15000); // 15 second timeout
-      sendAdbCommand(body.ip, body.cmd, body.payload||'').then(ok=>{
+      }, 25000); // 25s cap covers the adb→cast→dial fallback chain
+      transport.sendTransportCommand(body.ip, body.cmd, body.payload||'', {
+        adbSend: (cmd, payload)=> sendAdbCommand(body.ip, cmd, payload||''),
+      }).then(r=>{
         clearTimeout(timeoutId);
-        console.log(`[cmd] ${body.ip} ${body.cmd} → ${ok?'SUCCESS':'FAILED'}`);
+        console.log(`[cmd] ${body.ip} ${body.cmd} → ${r.ok ? ('SUCCESS via '+r.via) : ('FAILED ('+(r.error||'unknown')+')')}`);
+        if(res.writableEnded) return;
         res.writeHead(200, {'Content-Type':'application/json'});
-        res.end(JSON.stringify({ok, sent:ok, via:'adb'}));
+        res.end(JSON.stringify({ok:r.ok, sent:r.ok, via:r.via || transport.getDeviceVia(body.ip), error:r.error}));
       }).catch(err=>{
         clearTimeout(timeoutId);
         console.error(`[cmd] ${body.ip} ${body.cmd} error: ${err.message}`);
+        if(res.writableEnded) return;
         res.writeHead(200, {'Content-Type':'application/json'});
-        res.end(JSON.stringify({ok:false, sent:false, via:'adb', error:err.message}));
+        res.end(JSON.stringify({ok:false, sent:false, via:transport.getDeviceVia(body.ip), error:err.message}));
       });
     });
     return true; // async

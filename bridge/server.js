@@ -10,6 +10,7 @@
 const http = require("http");
 const PORT = parseInt(process.env.PORT,10) || 3001;
 const isHosted = !!process.env.VERCEL || !!process.env.RENDER || !!process.env.NETLIFY || process.env.NODE_ENV==='production';
+const transport = require("../cast-transport"); // shared ADB + Cast + DIAL routing
 
 let express, cors;
 try { express=require("express"); cors=require("cors"); } catch(e){
@@ -341,21 +342,23 @@ function buildApp(){
     app.post("/cmd", async (req,res)=>{
       const {ip, cmd, payload}=req.body||{};
       if(!ip){ return res.json({ok:false, error:"no ip"}); }
-      let ok=false, error=null;
       try{
-        ok = await sendAdbCommand(ip, cmd, payload||"");
+        const r = await transport.sendTransportCommand(ip, cmd, payload||"", {
+          adbSend: (c,p)=> sendAdbCommand(ip, c, p||""),
+        });
+        console.log(`[cmd] ${ip} ${cmd} ${payload||""} → ${r.ok ? ('REAL '+r.via) : (r.error||'unavailable')}`);
+        res.json({ok:r.ok, sent:r.ok, via:r.via || transport.getDeviceVia(ip), error:r.error});
       }catch(e){
-        ok=false; error=e.message||String(e);
+        res.json({ok:false, sent:false, via:transport.getDeviceVia(ip), error:e.message||String(e)});
       }
-      console.log(`[cmd] ${ip} ${cmd} ${payload||""} → ${ok?'REAL ADB':(error||'unavailable')}`);
-      res.json({ok, sent:ok, via:'adb', error});
     });
     app.get("/validate", async (req,res)=>{
       const ip = req.query.ip;
       if(!ip){ return res.json({ok:false, valid:false, error:"no ip"}); }
       try{
-        const isValid = await sendAdb(ip, ['shell','echo','test']);
-        res.json({ok:true, valid:isValid, via:'adb'});
+        const v = await transport.validateTransport(ip, ()=> sendAdb(ip, ['shell','echo','test']));
+        if(v.valid) transport.setDeviceVia(ip, v.via);
+        res.json({ok:true, valid:v.valid, via:v.via || undefined, name:v.name || undefined});
       }catch(e){
         res.json({ok:true, valid:false, error:e.message||String(e)});
       }
@@ -385,10 +388,11 @@ function buildApp(){
         let ip="";
         try{ ip = new URL('http://x'+req.url).searchParams.get('ip')||''; }catch{ ip=""; }
         if(!ip){ res.writeHead(200, {"Content-Type":"application/json"}); return res.end(JSON.stringify({ok:false, valid:false, error:"no ip"})); }
-        sendAdb(ip, ['shell','echo','test']).then(isValid=>{
-          console.log(`[validate] ${ip} → ${isValid?'valid':'invalid'}`);
+        transport.validateTransport(ip, ()=> sendAdb(ip, ['shell','echo','test'])).then(v=>{
+          console.log(`[validate] ${ip} → ${v.valid ? ('valid via '+v.via) : 'invalid'}`);
+          if(v.valid) transport.setDeviceVia(ip, v.via);
           res.writeHead(200, {"Content-Type":"application/json"});
-          res.end(JSON.stringify({ok:true, valid:isValid, via:'adb'}));
+          res.end(JSON.stringify({ok:true, valid:v.valid, via:v.via || undefined, name:v.name || undefined}));
         }).catch(err=>{
           res.writeHead(200, {"Content-Type":"application/json"});
           res.end(JSON.stringify({ok:true, valid:false, error:err.message||String(err)}));
@@ -406,16 +410,18 @@ function buildApp(){
         }
         if(req.url.startsWith("/cmd")){
           if(!body.ip){ res.writeHead(200, {"Content-Type":"application/json"}); return res.end(JSON.stringify({ok:false, error:"no ip"})); }
-          sendAdbCommand(body.ip, body.cmd, body.payload||"").then(ok=>{
-            console.log(`[cmd] ${body.ip} ${body.cmd} ${body.payload||""} → ${ok?'REAL ADB':'unavailable'}`);
+          transport.sendTransportCommand(body.ip, body.cmd, body.payload||"", {
+            adbSend: (c,p)=> sendAdbCommand(body.ip, c, p||""),
+          }).then(r=>{
+            console.log(`[cmd] ${body.ip} ${body.cmd} ${body.payload||""} → ${r.ok ? ('REAL '+r.via) : (r.error||'unavailable')}`);
             res.writeHead(200, {"Content-Type":"application/json"});
-            res.end(JSON.stringify({ok, sent:ok, via:'adb'}));
+            res.end(JSON.stringify({ok:r.ok, sent:r.ok, via:r.via || transport.getDeviceVia(body.ip), error:r.error}));
           }).catch(err=>{
             console.error(`[cmd] error: ${err.message}`);
             res.writeHead(200, {"Content-Type":"application/json"});
-            res.end(JSON.stringify({ok:false, sent:false, via:'adb', error:err.message}));
+            res.end(JSON.stringify({ok:false, sent:false, via:transport.getDeviceVia(body.ip), error:err.message}));
           });
-          return; // Don't end response here - wait for async ADB
+          return; // Don't end response here - wait for async transport
         }
         if(req.url.startsWith("/search")){
           if(!isHosted) states.set(body.ip, {...(states.get(body.ip)||{}), searchActive: !!body.active});

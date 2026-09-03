@@ -49,7 +49,7 @@
         <button class="btn go-live" id="goLiveBtn">🚀 Go Live — bring everything up</button>
       </div>
       <div class="limit-banner">
-        <strong>✅ Real control only:</strong> Discover + control your actual TV on the <em>same Wi-Fi</em>. Run <code>node server.js</code> on <strong>one</strong> home PC, then open this page on <strong>any phone / tablet / laptop</strong> (same Wi-Fi) and save that PC's IP in <strong>Home bridge IP</strong> below — connecting validates the TV (same network + ADB reachable) and remembers it.
+        <strong>✅ Fully automatic:</strong> open this page and it finds your TV, checks it answers, pairs and connects by itself. The bridge auto-starts with Windows on your home PC — phones / tablets / laptops just open their one-tap link (shown under Network Scan) on the <em>same Wi-Fi</em>. No typing, no setup.
       </div>
     </div>
     <div class="hero-visual">
@@ -255,11 +255,11 @@
 
 <section id="bridgeHelp" class="section alt small">
   <div class="container">
-    <h3>🚀 How to control your REAL TV (same Wi-Fi, any device)</h3>
-    <p><strong>One home PC</strong> runs the bridge; <strong>all your devices</strong> (phone / tab / laptop) use this page — hosted free-cloud URL or LAN URL, both work:</p>
-<pre><code>PC:   node server.js   (note the LAN URL it prints, e.g. http://192.168.1.67:5000)
-Phone (same Wi-Fi): open this site → type 192.168.1.67 in "Home bridge IP" → Save bridge → Scan → tap TV → Pair</code></pre>
-    <p class="muted">On your TV, enable <strong>ADB over network</strong> (Developer options → Network/USB debugging, port 5555). The page only connects to a <strong>legit</strong> TV: valid IP + same /24 network + answers ADB via <code>/validate</code> — then it remembers the IP. Same Wi-Fi only — a browser hard limit, not a bug.</p>
+    <h3>🚀 How it works (nothing to set up)</h3>
+    <p>The bridge starts automatically with Windows on your home PC. Every device on the <strong>same Wi-Fi</strong> just opens its one-tap link (see <strong>Network Scan → 📱 / ☁️ links → Copy</strong>) — the page then scans, validates the TV, pairs and connects all by itself, and remembers it for next time.</p>
+<pre><code>PC:     bridge auto-starts at logon (done automatically)
+Phone:  open the 📱 or ☁️ link (same Wi-Fi) → remote is already connected</code></pre>
+    <p class="muted">Control depth depends on the TV: <strong>Android TV with Network debugging</strong> → full D-Pad remote. <strong>Chromecast</strong> → play/pause, quit-to-home, volume. Same Wi-Fi only — a browser hard limit, not a bug.</p>
   </div>
 </section>
 
