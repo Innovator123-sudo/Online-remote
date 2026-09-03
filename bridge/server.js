@@ -300,6 +300,16 @@ async function ssdpScan(){
 function buildApp(){
   if(express){
     const app = express();
+    // CORS + Private Network Access so a free-cloud https page can use this home bridge
+    app.use((req,res,next)=>{
+      res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Private-Network","true");
+      if(req.method==="OPTIONS") return res.sendStatus(204);
+      next();
+    });
     app.use(cors());
     app.use(express.json());
     app.get("/status", (req,res)=>{
@@ -356,7 +366,8 @@ function buildApp(){
     const server = http.createServer((req,res)=>{
       res.setHeader("Access-Control-Allow-Origin","*");
       res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers","Content-Type");
+      res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Private-Network","true");
       if(req.method==="OPTIONS"){ res.writeHead(204); return res.end(); }
       if(req.url.startsWith("/status")){
         res.writeHead(200, {"Content-Type":"application/json"});

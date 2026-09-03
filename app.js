@@ -72,18 +72,65 @@ function now(){ return performance.now(); }
 // not the cloud server's LAN. So we must NOT scan the cloud, and must NOT try http://localhost from https (mixed-content blocked).
 // In hosted mode we use only simulated discovery + optional local bridge (user runs `node server.js` locally, which is http://localhost:3000).
 const isHostedPage = location.protocol === 'https:' || (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && location.hostname !== '' && !location.hostname.startsWith('192.168.') && !location.hostname.startsWith('10.') && location.hostname !== '::1');
-async function fetchBridge(path, opts={}){
-  // In hosted https, http://localhost is mixed-content and will be blocked — only try same-origin
-  const urls = isHostedPage ? [path] : [path, `http://localhost:5000${path}`, `http://localhost:3000${path}`, `http://localhost:3001${path}`];
-  for(const u of urls){
-    try{
-      const r = await fetch(u, opts);
-      if(r && r.ok) return r;
-      // if not ok but no network error, return it (e.g., 401 for bad code)
-      if(r) return r;
-    }catch{}
+// Quiet bridge routing — fixes "Direct ADB connection failed" log spam.
+// Old code looped over 5 URLs per keypress and log()ed every miss. Now we
+// probe candidates SILENTLY once, cache the single working base, and every
+// command uses only that base. At most 1 log line per failed command.
+// Cloud (https) pages can reach the home bridge at http://<PC-LAN-IP>:5000
+// once the user saves it below (Private Network Access headers on server.js
+// allow this in Chrome). Phones/tablets need NO localhost — just same Wi-Fi
+// + the one home PC running `node server.js`.
+let bridgeBase = null; // cached working bridge base URL, e.g. "http://192.168.1.67:5000"
+try { bridgeBase = localStorage.getItem("bridgeBase") || null; } catch {}
+function bridgeCandidates(){
+  const list = [];
+  // 1. Same-origin (works when page itself is served by node server.js on LAN)
+  if(location.origin && location.origin.startsWith("http")) list.push(location.origin);
+  // 2. Saved home-bridge LAN IP (cloud page -> home PC). Set via bridge UI.
+  if(bridgeBase && !list.includes(bridgeBase)) list.push(bridgeBase);
+  // 3. Localhost fallbacks (PC itself)
+  for(const u of ["http://localhost:5000","http://localhost:3001","http://localhost:3000","http://127.0.0.1:5000"]){
+    if(!list.includes(u)) list.push(u);
   }
-  throw new Error('bridge fetch failed');
+  return list;
+}
+async function probeBridgeBase(base, timeoutMs=1200){
+  try{
+    const r = await fetch(`${base}/status`, {method:"GET", signal: AbortSignal.timeout(timeoutMs)});
+    if(!r.ok) return false;
+    const t = await r.text();
+    if(!t) return false;
+    const j = JSON.parse(t);
+    return !!(j && (j.ok || j.bridge || j.tvs));
+  }catch{ return false; }
+}
+async function fetchBridge(path, opts={}){
+  // Use cached base first (fast, no spam). Re-probe silently only if it fails.
+  const tried = [];
+  if(bridgeBase) tried.push(bridgeBase);
+  for(const c of bridgeCandidates()){ if(!tried.includes(c)) tried.push(c); }
+  let lastErr = null;
+  for(const base of tried){
+    try{
+      const r = await fetch(`${base}${path}`, opts);
+      if(r) {
+        if(!bridgeBase || base !== bridgeBase){
+          bridgeBase = base;
+          try{ localStorage.setItem("bridgeBase", base); }catch{}
+        }
+        return r;
+      }
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('bridge fetch failed');
+}
+// Rate-limited error toast — gestures can fire often, don't stack toasts.
+let _lastErrToastAt = 0;
+function errToastOnce(msg){
+  const t = performance.now();
+  if(t - _lastErrToastAt < 3000) return;
+  _lastErrToastAt = t;
+  toast(msg, "bad");
 }
 
 const themeToggle = $("#themeToggle");
@@ -138,37 +185,83 @@ async function detectSubnet(){
 }
 detectSubnet();
 
+let _bridgeToastShown = false;
 async function checkBridge(){
   const row = $("#bridgeRow");
   const status = $("#bridgeStatus");
-  // Hosted https → only same-origin, no localhost (mixed-content)
-  const urls = isHostedPage ? ["/status"] : ["/status", "http://localhost:5000/status", "http://localhost:3000/status", "http://localhost:3001/status"];
-  for(const u of urls){
-    try{
-      const r = await fetch(u, {method:"GET", signal: AbortSignal.timeout(isHostedPage?600:800)});
-      if(r.ok){
-        state.bridge = true;
-        row.classList.add("connected");
-        status.textContent = "● Bridge connected — real SSDP ready (Wi-Fi OK)";
-        toast("Bridge connected — real discovery enabled", "good");
-        try{
-          const j = await r.json();
-          if(j.tvs && Array.isArray(j.tvs) && j.tvs.length){
-            j.tvs.forEach(t=> addTv({name:t.name||t.hostname, ip:t.ip, model:t.model||"Android TV", via:"bridge"}));
-          }
-        }catch{}
-        return;
-      }
-    }catch{}
+  for(const base of bridgeCandidates()){
+    if(await probeBridgeBase(base, isHostedPage ? 1500 : 800)){
+      bridgeBase = base;
+      try{ localStorage.setItem("bridgeBase", base); }catch{}
+      state.bridge = true;
+      if(row) row.classList.add("connected");
+      if(status) status.textContent = `● Bridge connected (${base}) — real Wi-Fi scan + ADB ready`;
+      if(!_bridgeToastShown){ _bridgeToastShown = true; toast("Bridge connected — real discovery enabled", "good"); }
+      try{
+        const r = await fetch(`${base}/status`, {signal: AbortSignal.timeout(1500)});
+        const j = JSON.parse(await r.text());
+        if(j.tvs && Array.isArray(j.tvs) && j.tvs.length){
+          j.tvs.forEach(t=> addTv({name:t.name||t.hostname, ip:t.ip, model:t.model||"Android TV", via:"bridge"}));
+        }
+      }catch{}
+      renderBridgeIpRow();
+      return;
+    }
   }
   state.bridge = false;
-  row.classList.remove("connected");
-  status.textContent = isHostedPage
-    ? "○ Hosted mode — run `node server.js` locally for real Wi-Fi scan + ADB control"
-    : "○ Direct mode — scan or add TV manually<br><span style='font-size:.7em; color:var(--muted);'>Bridge: " + (state.bridge ? "connected" : "not running (run node server.js)") + "</span>";
+  if(row) row.classList.remove("connected");
+  if(status) status.textContent = isHostedPage
+    ? "○ Cloud page — type your home PC's LAN IP below (same Wi-Fi) for real TV control"
+    : "○ Direct mode — scan or add TV manually (run node server.js for bridge)";
+  renderBridgeIpRow();
+}
+// Bridge LAN-IP row: lets a cloud/https page reach ONE home bridge.
+// Saved to localStorage, so phones/tablets/laptops remember it — no localhost needed on them.
+function renderBridgeIpRow(){
+  let wrap = $("#bridgeIpWrap");
+  if(!wrap){
+    const row = $("#bridgeRow");
+    if(!row) return;
+    wrap = document.createElement("div");
+    wrap.id = "bridgeIpWrap";
+    wrap.style.cssText = "display:flex;gap:8px;padding:8px 16px;flex-wrap:wrap;align-items:center";
+    row.after(wrap);
+  }
+  const saved = bridgeBase || (()=>{ try{return localStorage.getItem("bridgeBase")||""}catch{return ""} })();
+  wrap.innerHTML = "";
+  const input = document.createElement("input");
+  input.id = "bridgeIpInput";
+  input.placeholder = "Home bridge IP e.g. 192.168.1.67 (:5000)";
+  input.value = saved && saved.includes("://") ? saved.replace(/^https?:\/\//,"") : (saved || "");
+  input.style.cssText = "flex:1;min-width:180px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:10px;font-weight:600;outline:none;font-size:.85em";
+  const btn = document.createElement("button");
+  btn.className = "btn small primary";
+  btn.textContent = "Save bridge";
+  btn.onclick = async ()=>{
+    let v = input.value.trim().replace(/\/+$/,"");
+    if(!v){ toast("Type your PC's LAN IP first", "bad"); return; }
+    if(!v.startsWith("http")) v = "http://" + v;
+    if(!/:\d+$/.test(v)) v = v + ":5000";
+    if(!/^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)){ toast("Use format 192.168.1.67 or 192.168.1.67:5000", "bad"); return; }
+    toast("Checking bridge at " + v + "…");
+    if(await probeBridgeBase(v, 2500)){
+      bridgeBase = v;
+      try{ localStorage.setItem("bridgeBase", v); }catch{}
+      state.bridge = true;
+      toast("Bridge saved — scanning real TVs…", "good");
+      await checkBridge();
+      if(!state.scanning) doScan();
+    } else {
+      toast("No bridge at " + v + " — is node server.js running on that PC + same Wi-Fi?", "bad");
+    }
+  };
+  const hint = document.createElement("small");
+  hint.style.cssText = "width:100%;opacity:.65";
+  hint.textContent = "Run node server.js on ONE home PC, then open this page on any phone/tab/laptop (same Wi-Fi) and save that PC's IP here once.";
+  wrap.append(input, btn, hint);
 }
 checkBridge();
-setInterval(checkBridge, 8000);
+setInterval(checkBridge, 15000);
 
 const POOL = [
   {name:"Living Room TV", model:"TCL Android TV", icon:"L"},
@@ -279,23 +372,19 @@ async function doScan(){
   scanStatus.textContent = "Scanning for valid TVs (name contains tv)…";
   setScanProgress(32);
 
-  // In parallel, try bridge for REAL Wi-Fi devices (merge, don't block) — try unified then legacy
+  // In parallel, try bridge for REAL Wi-Fi devices (merge, don't block) — quiet, no spam
   (async()=>{
     try{
       if(!state.bridge) await checkBridge();
       if(!state.bridge) return;
       scanStatus.textContent = "Wi-Fi OK • Checking bridge for real TVs…";
-      let r=null;
-      const scanUrls = isHostedPage ? ["/scan"] : ["/scan", "http://localhost:5000/scan", "http://localhost:3000/scan", "http://localhost:3001/scan"];
-      for(const u of scanUrls){
-        try{ r = await fetch(u, {signal: AbortSignal.timeout(isHostedPage?1200:3200)}); if(r && r.ok) break; }catch{}
-      }
-      if(!r || !r.ok) return;
-      const scanText = await r.text();
-      if(!scanText) return;
-      let data;
-      try{ data = JSON.parse(scanText); }catch{ return; }
-      if(data.tvs && data.tvs.length){
+      let data = null;
+      try{
+        const r = await fetchBridge("/scan", {signal: AbortSignal.timeout(6000)});
+        const scanText = await r.text();
+        if(scanText) data = JSON.parse(scanText);
+      }catch{ return; } // silent — finishScan() already handles the empty case with ONE message
+      if(data && data.tvs && data.tvs.length){
         // Merge real TVs without clearing existing results
         let added=0;
         data.tvs.forEach(t=>{
@@ -372,14 +461,52 @@ if(wifiCheckBtn) wifiCheckBtn.onclick = async ()=>{
   toast(`${wifiOk} • ${bridgeOk}`, state.subnet?"good":"bad");
   scanStatus.textContent = `${wifiOk} • ${bridgeOk}`;
 };
-$("#addManualBtn").onclick = ()=>{
+function isValidIpv4(ip){
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec((ip||"").trim());
+  if(!m) return false;
+  return m.slice(1).every(o=>{ const n=+o; return n>=0 && n<=255; });
+}
+function sameSubnetAsMe(ip){
+  if(!state.subnet) return true; // subnet not detected yet — don't block
+  return ip.split(".").slice(0,3).join(".") === state.subnet;
+}
+// Legit-TV check: valid IPv4 + same /24 network + reachable via bridge /validate
+// (or a quick DIAL probe as fallback). Quiet — exactly ONE toast/log on failure.
+async function validateTv(tv){
+  if(!isValidIpv4(tv.ip)) return {ok:false, reason:`"${tv.ip}" is not a valid IPv4 address`};
+  if(!sameSubnetAsMe(tv.ip)){
+    return {ok:false, reason:`${tv.ip} is not on your Wi-Fi (${state.subnet}.0/24). TV + this device must share the same network.`};
+  }
+  if(state.bridge){
+    try{
+      const r = await fetchBridge(`/validate?ip=${encodeURIComponent(tv.ip)}`, {signal: AbortSignal.timeout(5000)});
+      const t = await r.text();
+      const j = t ? JSON.parse(t) : null;
+      if(j && j.valid) return {ok:true};
+      return {ok:false, reason:`${tv.ip} didn't answer ADB (enable Developer options → Network/USB debugging on the TV, port 5555).`};
+    }catch{
+      return {ok:false, reason:`Bridge unreachable — is node server.js running + same Wi-Fi?`};
+    }
+  }
+  // No bridge: best-effort DIAL probe (quiet, short timeout). Pass = legit enough to pair.
+  try{
+    const ctl = new AbortController();
+    const to = setTimeout(()=> ctl.abort(), 1500);
+    await fetch(`http://${tv.ip}:8008/ssdp/device-desc.xml`, {method:"GET", signal: ctl.signal, mode:"no-cors"});
+    clearTimeout(to);
+    return {ok:true, via:"dial-probe"};
+  }catch{
+    return {ok:false, reason:`${tv.ip} not reachable directly. Run node server.js on your home PC (same Wi-Fi) and save its IP above, then retry.`};
+  }
+}
+$("#addManualBtn").onclick = async ()=>{
   const ip = $("#manualIp").value.trim();
   const name = $("#manualName").value.trim() || "Manual TV";
-  const ipRe = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if(!ipRe.test(ip)){ toast("Enter a valid IPv4 like 192.168.1.42", "bad"); return; }
+  if(!isValidIpv4(ip)){ toast("Enter a valid IPv4 like 192.168.1.42", "bad"); return; }
+  if(!sameSubnetAsMe(ip)){ toast(`That IP is not on your Wi-Fi (${state.subnet}.0/24) — same network only`, "bad"); return; }
   addTv({name, ip, model:"Manual", via:"manual", rssi:3});
   $("#manualIp").value=""; $("#manualName").value="";
-  toast(`Added ${name} at ${ip}`, "good");
+  toast(`Added ${name} at ${ip} — tap it to validate + connect`, "good");
 };
 // ─── GO LIVE — brings everything up with one click ───
 let goLiveRunning = false;
@@ -432,10 +559,27 @@ function genPairCode(){
   do{ c = Math.floor(100000 + Math.random()*900000).toString(); }while(c==="000000");
   return c;
 }
-function initiateConnect(tv){
+async function initiateConnect(tv){
   if(tv.paired && state.connected && state.connected.ip===tv.ip){
     toast("Already connected to "+tv.name);
     return;
+  }
+  // Legit + same-network gate: never "connect" to an unreachable/fake TV.
+  // Shows exactly one checking message, then either proceeds or explains why not.
+  if(!(tv.paired && tv._validated)){
+    toast(`Checking ${tv.name} (${tv.ip})…`);
+    scanStatus && (scanStatus.textContent = `Validating ${tv.ip}…`);
+    const v = await validateTv(tv);
+    if(!v.ok){
+      tv.invalid = true;
+      renderTvs();
+      log(`Not connecting — ${v.reason}`, "bad");
+      errToastOnce(v.reason);
+      return;
+    }
+    tv.invalid = false;
+    tv._validated = true;
+    renderTvs();
   }
   if(tv.paired){
     connectTv(tv);
@@ -518,9 +662,15 @@ async function doPair(){
 $("#pairConfirm").onclick = doPair;
 function connectTv(tv, autoFs=true){
   state.connected = tv;
-  localStorage.setItem("connectedIp", tv.ip);
-  // Mark TV as paired in localStorage for persistence
-  localStorage.setItem("paired_"+tv.ip, "true");
+  // Persist legit connection: saved IP + pairing survive reloads on any device.
+  try{
+    localStorage.setItem("savedTvIp", tv.ip);
+    localStorage.setItem("savedTvName", tv.name);
+    localStorage.setItem("connectedIp", tv.ip);
+    localStorage.setItem("paired_"+tv.ip, "true");
+  }catch{}
+  tv._validated = true;
+  tv.invalid = false;
   renderTvs();
   showConnected();
   $("#connPill").classList.add("connected");
@@ -552,7 +702,8 @@ function disconnect(){
   if(!state.connected) return;
   log(`Disconnected from ${state.connected.name}`, "warn");
   state.connected=null;
-  localStorage.removeItem("connectedIp");
+  try{ localStorage.removeItem("connectedIp"); }catch{}
+  // Keep savedTvIp + pairing so next visit on the same Wi-Fi reconnects in one tap.
   $("#connectedPanel").classList.remove("hidden");
   $("#remotePanel").classList.add("hidden");
   $("#connPill").classList.remove("connected");
@@ -560,27 +711,24 @@ function disconnect(){
   renderTvs();
 }
 $("#disconnectBtn").onclick = disconnect;
-(function(){
-  const ip = localStorage.getItem("connectedIp");
-  if(ip){
-    // On the hosted site we can't reach a real TV; don't auto-reconnect a remembered IP.
-    if(isHostedPage){
-      localStorage.removeItem("connectedIp");
-      return;
+(async function restoreSavedTv(){
+  let ip = null;
+  try{ ip = localStorage.getItem("savedTvIp") || localStorage.getItem("connectedIp"); }catch{}
+  if(!ip || !isValidIpv4(ip)) return;
+  for(let i=0;i<20 && !state.subnet;i++){ await new Promise(r=> setTimeout(r,100)); }
+  if(!sameSubnetAsMe(ip)){
+    log(`Saved TV (${ip}) is on a different network — scan to reconnect.`, "warn");
+    return; // keep it saved; don't delete — user may return to that Wi-Fi
+  }
+  const savedName = (()=>{ try{return localStorage.getItem("savedTvName")||"Saved TV"}catch{return "Saved TV"} })();
+  addTv({name:savedName, ip, model:"Android TV", via:"saved", rssi:3});
+  const tv = state.tvs.find(t=>t.ip===ip);
+  if(tv){
+    try{ tv.paired = !!localStorage.getItem("paired_"+ip); }catch{}
+    if(tv.paired){
+      tv._validated = false;
+      log(`Saved TV ${ip} found (same Wi-Fi) — tap Connect to validate + resume.`, "good");
     }
-    const prefix = ip.split('.').slice(0,3).join('.');
-    if(state.subnet && prefix === state.subnet){
-      addTv({name:"Previous TV", ip, model:"Android TV", via:"remembered", rssi:3});
-      const tv = state.tvs.find(t=>t.ip===ip);
-      if(tv){
-        tv.paired=true;
-        setTimeout(()=> connectTv(tv, false), 300);
-        return;
-      }
-    }
-    localStorage.removeItem("connectedIp");
-    log(`Previous TV (${ip}) is on a different network — scan to reconnect.`, "warn");
-    toast("Previous TV is on a different network — scan or add manually", "bad");
   }
 })();
 $("#searchToggle").onchange = (e)=>{
@@ -600,105 +748,53 @@ let _bridgeUnreachableShown = false;
 function warnHostedNoBridge(){
   if(_bridgeUnreachableShown) return;
   _bridgeUnreachableShown = true;
-  const msg = "You are on the hosted site, which can't reach your TV.\nRun \"node server.js\" on your PC and open http://localhost:5000 (same Wi-Fi) to control your real TV.";
-  toast("Control needs local server — open http://localhost:5000", "bad");
+  setTimeout(()=>{ _bridgeUnreachableShown = false; }, 15000); // remind at most every 15s, never per-keypress
+  const msg = "No bridge yet. Run \"node server.js\" on your home PC (same Wi-Fi), then type that PC's IP in \"Home bridge IP\" above and press Save bridge.";
+  toast("No bridge — save your home PC's IP above", "bad");
   log(msg, "bad");
 }
 
 async function sendCommand(cmd, payload=""){
   if(!state.connected){
-    toast("Not connected to any TV — scanning first", "bad");
-    log(`Blocked ${cmd} — no TV`, "warn");
+    errToastOnce("Not connected — scan, validate, then connect first");
     return;
   }
   if(cmd==="TEXT" && !state.searchActive){
-    log(`Buffered "${payload}" — enable Search to send`, "warn");
     state.buffer += payload;
-    $("#textBuffer").textContent = state.buffer;
+    try{ $("#textBuffer").textContent = state.buffer; }catch{}
     toast(`Search inactive: "${payload}" buffered, not sent`, "bad");
     return;
   }
-  // On a hosted https page with no bridge, real control is impossible (mixed content
-  // blocks http://localhost AND the cloud isn't on the user's LAN). Give one clear
-  // message instead of trying localhost URLs that the browser will block.
-  if(isHostedPage && !state.bridge){
-    log(`${cmd} — can't send on hosted site (no local bridge)`, "warn");
+  if(!state.bridge || !bridgeBase){
+    await checkBridge();
+  }
+  if(!state.bridge || !bridgeBase){
+    // ONE clear hint instead of 5x "Direct ADB connection failed" lines.
     warnHostedNoBridge();
     return;
   }
-  log(`${cmd}${payload?` → ${payload}`:""}`, "good");
-  toast(`${cmd}${payload?` ${payload}`:""} → ${state.connected.name}`);
-
-  // Always use bridge mode for actual command delivery — direct TV HTTP fails with no-cors
-  // The bridge/server.js handles real ADB communication on port 5555
   const sendPayload = {ip: state.connected.ip, cmd, payload};
-  if(state.bridge){
-    // Use the bridge endpoint (localhost:3000 or hosted domain)
-    fetchBridge("/cmd", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(sendPayload)}).then(async r=>{
-      try{
-        const text = await r.text();
-        if(!text){ await sendDirectAdb(state.connected.ip, cmd, payload); return; }
-        let result;
-        try{ result = JSON.parse(text); }catch{ await sendDirectAdb(state.connected.ip, cmd, payload); return; }
-        if(!result.ok){
-          log(`Command failed via bridge: ${result.error || 'unknown'} — trying direct ADB`, "warn");
-          await sendDirectAdb(state.connected.ip, cmd, payload);
-        }
-      }catch(e){
-        await sendDirectAdb(state.connected.ip, cmd, payload);
-      }
-    }).catch(async err=>{
-      log(`Bridge connection error: ${err.message} — trying direct ADB`, "warn");
-      await sendDirectAdb(state.connected.ip, cmd, payload);
-    });
-  } else {
-    // No bridge available — try direct ADB via server fallback
-    await sendDirectAdb(state.connected.ip, cmd, payload);
-  }
-  const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
-  if(map[cmd]) flashZone(map[cmd]);
-}
-
-
-// Fallback direct ADB sender when bridge is unavailable.
-// Probes several local server URLs in order so it can reach `node server.js`
-// (localhost:3000 / 3001) even when the page is served from file:// or from a
-// hosted https origin. Never parses JSON from an empty/invalid body.
-async function sendDirectAdb(ip, cmd, payload=""){
-  const directUrls = buildDirectCmdUrls();
-  for(const baseUrl of directUrls){
-    try{
-      const r = await fetch(`${baseUrl}/cmd`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ip, cmd, payload}),
-        signal: AbortSignal.timeout(6000)
-      });
-      const text = await r.text();
-      if(!text){ log(`Direct ADB (${baseUrl}) returned empty response`, "warn"); continue; }
-      let result;
-      try{ result = JSON.parse(text); }catch{ log(`Direct ADB (${baseUrl}) response not valid JSON`, "warn"); continue; }
-      if(result.ok){ log(`Command sent via server ADB: ${cmd}`, "good"); return; }
-      log(`Direct ADB via ${baseUrl} failed: ${result.error || 'unknown error'}`, "bad");
-      return;
-    }catch(err){
-      // type errors from throwing .json() got swallowed earlier; here just try next URL
-      log(`Direct ADB connection failed (${baseUrl}): ${err.name==='TypeError' ? 'server not reachable' : err.message}`, "warn");
+  try{
+    const r = await fetch(`${bridgeBase}/cmd`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(sendPayload), signal: AbortSignal.timeout(8000)});
+    const text = await r.text();
+    if(!text){ log(`Bridge gave an empty reply — is node server.js still running?`, "warn"); errToastOnce("Bridge empty reply — retrying…"); return; }
+    let result;
+    try{ result = JSON.parse(text); }
+    catch{ log(`Bridge gave a non-JSON reply — update node server.js`, "warn"); errToastOnce("Bridge bad reply — update server.js"); return; }
+    if(result.ok){
+      log(`${cmd}${payload?` → ${payload}`:""}`, "good");
+      const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
+      if(map[cmd]) flashZone(map[cmd]);
+    } else {
+      log(`TV rejected ${cmd}: ${result.error || 'check ADB debugging on TV'}`, "bad");
+      errToastOnce(`TV rejected ${cmd} — check ADB on TV`);
     }
+  }catch(err){
+    state.bridge = false;
+    log(`Bridge unreachable — reconnecting…`, "warn");
+    errToastOnce("Bridge unreachable — check PC + same Wi-Fi");
+    checkBridge();
   }
-  toast(`Failed to send command — run <code>node server.js</code> locally at <code>http://localhost:5000</code>`, "bad");
-}
-// Candidate local server URLs, in preference order. Handles hosted (https) and
-// file:// pages where window.location.origin isn't the ADB server.
-function buildDirectCmdUrls(){
-  const origin = window.location.origin;
-  const hosts = [];
-  if(origin && origin !== 'null' && origin !== 'file://' && origin.startsWith('http')) hosts.push(origin);
-  hosts.push('http://localhost:5000');
-  hosts.push('http://localhost:3000');
-  hosts.push('http://localhost:3001');
-  hosts.push('http://127.0.0.1:5000');
-  return [...new Set(hosts)];
 }
 function flashZone(zone){
   const heroes = $$("#heroZoneGrid .zone");
@@ -1747,9 +1843,9 @@ log("Center zone is dead — keypad rests there.", "warn");
 if(state.bridge){
   log("Bridge connected — commands sent via bridge", "good");
 } else if(isHostedPage){
-  log("Hosted demo mode — commands simulated locally. Run \`node server.js\` on your PC for real TV control.", "warn");
+  log("Cloud page — save your home PC's bridge IP above for real TV control (same Wi-Fi).", "warn");
 } else {
-  log("No bridge — direct ADB fallback (requires local server at " + window.location.origin + "/cmd)", "warn");
+  log("No bridge — run node server.js, or save its LAN IP above", "warn");
 }
 window.TVHub = {state, sendCommand, addTv, recognizeLetter};
 // Real control requires the local server: when hosted (GitHub Pages/Vercel) the

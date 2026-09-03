@@ -19,17 +19,73 @@ const url = require('url');
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 const BRIDGE_PORT = 5001; // also listen on 5001 for backward compat (local only)
-const isHosted = !!process.env.VERCEL || !!process.env.RENDER || !!process.env.NETLIFY || process.env.NODE_ENV === 'production';
+
+// Cloud deployment configuration
+const config = {
+  // Detection
+  isHosted: !!process.env.VERCEL || !!process.env.RENDER || !!process.env.NETLIFY || process.env.NODE_ENV === 'production',
+  
+  // TV Discovery mode: 'ssdp', 'manual', 'mock'
+  tvDiscoveryMode: process.env.TV_DISCOVERY_MODE || 'ssdp',
+  
+  // Mock TVs for testing (disabled in production by default)
+  enableMockTvs: process.env.ENABLE_MOCK_TVS === 'true',
+  
+  // API security
+  apiKey: process.env.API_KEY || '',
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean),
+  
+  // Manual TV configuration (for cloud deployment)
+  manualTvs: (() => {
+    try {
+      return process.env.TVS_CONFIG ? JSON.parse(process.env.TVS_CONFIG) : [];
+    } catch (e) {
+      console.warn('⚠️ Invalid TVS_CONFIG JSON, ignoring');
+      return [];
+    }
+  })()
+};
+
+// Log configuration
+console.log(`\n📡 TV Control Hub Configuration`);
+console.log(`================================`);
+console.log(`Port: ${PORT}`);
+console.log(`Environment: ${config.isHosted ? 'Cloud/Production' : 'Local/Development'}`);
+console.log(`TV Discovery Mode: ${config.tvDiscoveryMode}`);
+if (config.manualTvs.length > 0) {
+  console.log(`Manual TVs: ${config.manualTvs.length} device(s) configured`);
+  config.manualTvs.forEach(tv => {
+    console.log(`  - ${tv.name} (${tv.ip})`);
+  });
+}
+if (config.apiKey) {
+  console.log(`API Key: Configured (authentication required)`);
+}
+console.log('');
+
+// Backward compatibility alias for existing code
+const isHosted = config.isHosted;
+
 // When hosted (Vercel/Render/etc.) the server's LAN is the cloud, NOT the user's TV network.
 // So we disable real SSDP and per-user state sharing — each client uses localStorage + simulated discovery.
 // This ensures hosting doesn't leak one user's TVs to another.
 let express, cors;
 try { express=require('express'); cors=require('cors'); } catch(e){}
 
-const MOCK_TVS = [
-  { name:"Living Room TV", ip:"192.168.1.101", model:"TCL Android TV" },
-  { name:"Bedroom TV", ip:"192.168.1.42", model:"Sony Bravia Google TV" },
-];
+// TV Configuration - prioritize manually configured TVs, fall back to demo mocks
+let MOCK_TVS = [];
+if (config.manualTvs.length > 0) {
+  // Use manually configured TVs from environment variable
+  MOCK_TVS = config.manualTvs;
+  console.log(`✅ Using ${MOCK_TVS.length} manually configured TV(s)`);
+} else if (config.enableMockTvs || config.isHosted) {
+  // Demonstration fallback
+  MOCK_TVS = [
+    { name:"Demo Living Room TV", ip:"192.168.1.101", model:"TCL Android TV (Demo)" },
+    { name:"Demo Bedroom TV", ip:"192.168.1.42", model:"Sony Bravia Google TV (Demo)" },
+  ];
+  console.log(`ℹ️ Using ${MOCK_TVS.length} demo TV(s) — configure TVS_CONFIG for your actual TVs`);
+}
 // Valid-TV-only mode (fixes "scan the valid tv only"): start empty, only real SSDP results are valid.
 // Mocks are only added as fallback demo if no valid found and client explicitly allows demo.
 let discovered = [];
@@ -278,10 +334,16 @@ function serveFile(res, filePath){
 }
 
 function handleApi(req, res){
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin','*');
+  // CORS + Private Network Access (lets a free-cloud https page talk to this
+  // home-LAN bridge at http://192.168.x.x:5000 in Chrome/Edge — the phone app
+  // flow. Without Allow-Private-Network the browser hard-blocks cloud→LAN.)
+  const reqOrigin = req.headers && req.headers.origin;
+  res.setHeader('Access-Control-Allow-Origin', reqOrigin || '*');
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Private-Network','true');
+  res.setHeader('Access-Control-Max-Age','600');
   if(req.method==='OPTIONS'){ res.writeHead(204); return res.end(); }
 
   const parsed = url.parse(req.url, true);
