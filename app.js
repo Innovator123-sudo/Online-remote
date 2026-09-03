@@ -229,28 +229,49 @@ async function onBridgeUp(){
   if(ready) initiateConnect(ready, true);
   else doScan();
 }
+let bridgeLanUrl = ""; // phone-usable LAN base reported by the bridge /status
+async function findBridgeBase(){
+  // Parallel probe (old code tried candidates one-by-one — slow). 900ms cap each.
+  const cands = [...new Set(bridgeCandidates())];
+  const hits = await Promise.all(cands.map(async base=> (await probeBridgeBase(base, 900)) ? base : null));
+  for(let i=0;i<cands.length;i++){ if(hits[i]) return cands[i]; }
+  return null;
+}
 async function checkBridge(){
+  if(document.hidden) return; // backgrounded tab: skip work, save CPU/battery
   const row = $("#bridgeRow");
   const status = $("#bridgeStatus");
-  for(const base of bridgeCandidates()){
-    if(await probeBridgeBase(base, isHostedPage ? 1500 : 800)){
-      bridgeBase = base;
-      try{ localStorage.setItem("bridgeBase", base); }catch{}
-      state.bridge = true;
-      if(row) row.classList.add("connected");
-      if(status) status.textContent = `● Bridge connected (${base}) — real Wi-Fi scan + ADB ready`;
-      if(!_bridgeToastShown){ _bridgeToastShown = true; toast("Bridge connected — real discovery enabled", "good"); }
-      try{
-        const r = await fetch(`${base}/status`, {signal: AbortSignal.timeout(1500)});
-        const j = JSON.parse(await r.text());
-        if(j.tvs && Array.isArray(j.tvs) && j.tvs.length){
-          j.tvs.forEach(t=> addTv({name:t.name||t.hostname, ip:t.ip, model:t.model||"Android TV", via:"bridge"}));
+  const found = await findBridgeBase();
+  if(found){
+    bridgeBase = found;
+    try{ localStorage.setItem("bridgeBase", found); }catch{}
+    state.bridge = true;
+    if(row) row.classList.add("connected");
+    if(status) status.textContent = `● Bridge connected (${found}) — real Wi-Fi scan + ADB ready`;
+    if(!_bridgeToastShown){ _bridgeToastShown = true; toast("Bridge connected — real discovery enabled", "good"); }
+    try{
+      const r = await fetch(`${found}/status`, {signal: AbortSignal.timeout(1500)});
+      const j = JSON.parse(await r.text());
+      if(j.tvs && Array.isArray(j.tvs) && j.tvs.length){
+        j.tvs.forEach(t=> addTv({name:t.name||t.hostname, ip:t.ip, model:t.model||"Android TV", via:"bridge"}));
+      }
+      if(j.lanUrl && typeof j.lanUrl === "string"){
+        bridgeLanUrl = j.lanUrl;
+        // Prefer the LAN URL over loopback: loopback-based phone links would be useless.
+        const host = (bridgeBase.match(/^https?:\/\/([^:/]+)/)||[])[1] || "";
+        if((host === "localhost" || host === "127.0.0.1") && location.hostname !== "localhost" && location.hostname !== "127.0.0.1"){
+          bridgeBase = j.lanUrl;
+          try{ localStorage.setItem("bridgeBase", j.lanUrl); }catch{}
         }
-      }catch{}
-      renderBridgeIpRow();
-      if(!_wasBridge){ _wasBridge = true; onBridgeUp(); }
-      return;
-    }
+      }
+    }catch{}
+    // Drop stale "No bridge yet" history — the bridge is live now.
+    let pruned = false;
+    for(let i=logEntries.length-1;i>=0;i--){ if(logEntries[i].msg.indexOf("No bridge yet")===0){ logEntries.splice(i,1); pruned=true; } }
+    if(pruned) renderLog();
+    renderBridgeIpRow();
+    if(!_wasBridge){ _wasBridge = true; log("Bridge connected — auto-pilot on", "good"); onBridgeUp(); }
+    return;
   }
   state.bridge = false;
   _wasBridge = false;
@@ -305,10 +326,12 @@ function renderBridgeIpRow(){
   hint.textContent = "Bridge auto-starts with Windows on this PC. Other devices just open a link below — no typing.";
   wrap.append(input, btn, hint);
   // One-tap phone links: opening either auto-saves the bridge and auto-connects.
-  if(bridgeBase){
-    const host = bridgeBase.replace(/^https?:\/\//, "").split(":")[0];
+  // Prefer the LAN URL (loopback links would be dead on a phone).
+  const linkBase = bridgeLanUrl || bridgeBase;
+  if(linkBase){
+    const host = linkBase.replace(/^https?:\/\//, "").split(":")[0];
     const links = [
-      ["📱 This network", `${bridgeBase}/?autoconnect=1`],
+      ["📱 This network", `${linkBase}/?autoconnect=1`],
       ["☁️ Cloud page", `${location.origin}${location.pathname}?bridge=${host}&autoconnect=1`],
     ];
     links.forEach(([label, url])=>{
@@ -347,11 +370,12 @@ function addTv({name, ip, model, via="scan", rssi}){
   if(!ip) ip = randomIp();
   if(state.tvs.some(t=> t.ip===ip)) return;
   const tpl = POOL.find(p=> p.name===name) || {};
+  const rawModel = model || tpl.model || "Android TV";
   const tv = {
     id: uid(),
     name: name || tpl.name || `Android TV ${state.tvs.length+1}`,
     ip,
-    model: model || tpl.model || "Android TV",
+    model: (/^urn:/i.test(rawModel) ? "DIAL Cast TV" : rawModel).slice(0, 32),
     icon: tpl.icon || (name? name[0].toUpperCase() : "T"),
     via,
     rssi: rssi ?? (2+ Math.floor(Math.random()*2)),
@@ -845,8 +869,8 @@ function warnHostedNoBridge(){
   if(_bridgeUnreachableShown) return;
   _bridgeUnreachableShown = true;
   setTimeout(()=>{ _bridgeUnreachableShown = false; }, 15000); // remind at most every 15s, never per-keypress
-  const msg = "No bridge yet. Run \"node server.js\" on your home PC (same Wi-Fi), then type that PC's IP in \"Home bridge IP\" above and press Save bridge.";
-  toast("No bridge — save your home PC's IP above", "bad");
+  const msg = "No bridge yet — is your home PC awake (bridge auto-starts at logon) and on the same Wi-Fi?";
+  toast("No bridge — wake the home PC / check same Wi-Fi", "bad");
   log(msg, "bad");
 }
 
@@ -930,6 +954,7 @@ const video = $("#video"), overlay=$("#overlay"), zoneOverlay=$("#zoneOverlay"),
 const gestureLabel=$("#gestureLabel"), zoneLabel=$("#zoneLabel"), confLabel=$("#confLabel"), fpsLabel=$("#fpsLabel");
 const camToggle=$("#camToggle"), mirrorToggle=$("#mirrorToggle"), showLandmarks=$("#showLandmarks");
 let hands=null, camera=null, running=false, rafId=null;
+let _inferBusy = false; // inference in-flight guard (see startCamera)
 let lastStream=null; // mirrors camera into fullscreen gesture page
 let lastFpsUpdate=now(), frames=0, fps=0;
 function setCamUI(on){
@@ -972,7 +997,7 @@ function drawZones(){
   ctx.fillText("CENTER — idle", w/2, cy0 - 8*dpr);
 }
 $("#cooldownRange").oninput = e=>{ state.DWELL_MS=parseInt(e.target.value); $("#cooldownVal").textContent=(state.DWELL_MS/1000)+"s"; };
-$("#deadRange").oninput = e=>{ state.deadPct=parseInt(e.target.value); $("#deadVal").textContent=state.deadPct+"%"; drawZones(); };
+$("#deadRange").oninput = e=>{ state.deadPct=parseInt(e.target.value); $("#deadVal").textContent=state.deadPct+"%"; drawZones(); _fsGridFresh=false; };
 $("#pauseGestures").onchange = e=> state.pause=e.target.checked;
 mirrorToggle.onchange = ()=> videoWrap.classList.toggle("mirror", mirrorToggle.checked);
 videoWrap.classList.toggle("mirror", mirrorToggle.checked);
@@ -1130,7 +1155,7 @@ async function initHands(){
   hands = new Hands({locateFile: (file)=> `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
   hands.setOptions({
     maxNumHands: 1,
-    modelComplexity: 1,
+    modelComplexity: 0, // lite model — ~2-3x faster, plenty for palm-zone mapping
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5,
     selfMode: false,
@@ -1138,23 +1163,8 @@ async function initHands(){
   hands.onResults(onHandsResults);
   return hands;
 }
-// Draws the MediaPipe hand skeleton on a fullscreen overlay canvas,
-// mapping normalized landmarks through the video cover-transform so it lines up with the camera feed.
-function drawHandOnCanvas(canvas, landmarks, mirror){
-  if(!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  if(rect.width < 10) return;
-  const dpr = window.devicePixelRatio||1;
-  const cw = rect.width*dpr, ch = rect.height*dpr;
-  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
-  const scale = Math.max(cw/vw, ch/vh);
-  const w = vw*scale, h = vh*scale;
-  const ox = (cw - w)/2, oy = (ch - h)/2;
-  const P = lm=>({ x: ox + (mirror ? 1-lm.x : lm.x)*w, y: oy + lm.y*h });
-  const pts = landmarks.map(P);
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,cw,ch);
+// Paints the MediaPipe hand skeleton points (no clear — caller owns the canvas).
+function strokeFsSkeleton(ctx, pts, dpr){
   if(typeof HAND_CONNECTIONS !== "undefined"){
     ctx.lineWidth = 2.5*dpr;
     ctx.lineCap = "round";
@@ -1168,6 +1178,61 @@ function drawHandOnCanvas(canvas, landmarks, mirror){
   const tips = [4,8,12,16,20];
   ctx.fillStyle = "rgba(255,80,190,1)";
   tips.forEach(i=>{ const p=pts[i]; ctx.beginPath(); ctx.arc(p.x,p.y,4.5*dpr,0,7); ctx.fill(); });
+}
+// Paints the zone grid (no clear — caller owns the canvas).
+function strokeFsGrid(ctx, w, h, dpr){
+  const dead=state.deadPct/100;
+  const cx0=(0.5-dead/2)*w, cx1=(0.5+dead/2)*w;
+  const cy0=(0.5-dead/2)*h, cy1=(0.5+dead/2)*h;
+  ctx.strokeStyle="rgba(255,255,255,.18)";
+  ctx.lineWidth=2*dpr;
+  ctx.setLineDash([8*dpr,8*dpr]);
+  ctx.strokeRect(cx0, cy0, cx1-cx0, cy1-cy0);
+  ctx.setLineDash([]);
+  ctx.strokeStyle="rgba(79,124,255,.14)";
+  ctx.lineWidth=2*dpr;
+  ctx.beginPath(); ctx.moveTo(cx0,0); ctx.lineTo(cx0,h); ctx.moveTo(cx1,0); ctx.lineTo(cx1,h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,cy0); ctx.lineTo(w,cy0); ctx.moveTo(0,cy1); ctx.lineTo(w,cy1); ctx.stroke();
+}
+let _fsGridFresh = false; // grid already painted since last resize — skip redundant redraws
+// Single-pass fullscreen paint: ONE clear, then grid + skeleton. (Old code did
+// clear→grid, clear→skeleton, clear→grid per frame — 3x overdraw + erased skeleton.)
+function fsPaint(landmarks){
+  const fsO=$("#fsOverlay");
+  if(!fsO) return;
+  const rect=fsO.getBoundingClientRect();
+  if(rect.width < 50) return;
+  const dpr=window.devicePixelRatio||1;
+  const cw=rect.width*dpr, ch=rect.height*dpr;
+  const vw=video.videoWidth || 1280, vh=video.videoHeight || 720;
+  const scale=Math.max(cw/vw, ch/vh);
+  const w=vw*scale, h=vh*scale;
+  const ox=(cw-w)/2, oy=(ch-h)/2;
+  const mirror = mirrorToggle && mirrorToggle.checked;
+  const pts=landmarks.map(lm=>({ x: ox + (mirror ? 1-lm.x : lm.x)*w, y: oy + lm.y*h }));
+  const ctx=fsO.getContext("2d");
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,cw,ch);
+  strokeFsGrid(ctx, cw, ch, dpr);
+  strokeFsSkeleton(ctx, pts, dpr);
+  _fsGridFresh = true;
+}
+// Small hand preview (air-draw page) — own tiny canvas, cheap.
+function drawHandOnCanvas(canvas, landmarks, mirror){
+  if(!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if(rect.width < 10) return;
+  const dpr = window.devicePixelRatio||1;
+  const cw = rect.width*dpr, ch = rect.height*dpr;
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const scale = Math.max(cw/vw, ch/vh);
+  const w = vw*scale, h = vh*scale;
+  const ox = (cw - w)/2, oy = (ch - h)/2;
+  const pts = landmarks.map(lm=>({ x: ox + (mirror ? 1-lm.x : lm.x)*w, y: oy + lm.y*h }));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,cw,ch);
+  strokeFsSkeleton(ctx, pts, dpr);
   return pts;
 }
 // ---------- PAGE NAVIGATION + FULLSCREEN GESTURE ----------
@@ -1200,8 +1265,13 @@ function leaveFullscreen(){
   const fsV=$("#fsVideo"); if(fsV) fsV.srcObject=null;
 }
 function gestureHud(msg){
-  if(gestureLabel) gestureLabel.textContent=msg;
-  const fsh=$("#fsGestureHud"); if(fsh) fsh.textContent=msg;
+  // Cached: DOM text writes every frame are a real lag source — skip unchanged.
+  if(gestureLabel && gestureLabel._v !== msg){ gestureLabel._v = msg; gestureLabel.textContent = msg; }
+  const fsh = $("#fsGestureHud");
+  if(fsh && fsh._v !== msg){ fsh._v = msg; fsh.textContent = msg; }
+}
+function setZoneHud(txt){
+  if(zoneLabel && zoneLabel._v !== txt){ zoneLabel._v = txt; zoneLabel.textContent = txt; }
 }
 function resizeFsOverlay(){
   const fsO=$("#fsOverlay");
@@ -1209,8 +1279,10 @@ function resizeFsOverlay(){
   const dpr=window.devicePixelRatio||1;
   fsO.width = window.innerWidth * dpr;
   fsO.height = window.innerHeight * dpr;
+  _fsGridFresh = false; // size changed → grid must repaint
 }
 function syncFsOverlayState(){
+  // Static grid repaint (resize / page-enter / no-hand first frame only).
   const fsO=$("#fsOverlay");
   if(!fsO) return;
   const rect = fsO.getBoundingClientRect();
@@ -1218,20 +1290,10 @@ function syncFsOverlayState(){
   const dpr=window.devicePixelRatio||1;
   const w=rect.width*dpr, h=rect.height*dpr;
   const ctx=fsO.getContext("2d");
-  const dead=state.deadPct/100;
-  const cx0=(0.5-dead/2)*w, cx1=(0.5+dead/2)*w;
-  const cy0=(0.5-dead/2)*h, cy1=(0.5+dead/2)*h;
-  ctx.clearRect(0,0,w,h);
   ctx.setTransform(1,0,0,1,0,0);
-  ctx.strokeStyle="rgba(255,255,255,.18)";
-  ctx.lineWidth=2*dpr;
-  ctx.setLineDash([8*dpr,8*dpr]);
-  ctx.strokeRect(cx0, cy0, cx1-cx0, cy1-cy0);
-  ctx.setLineDash([]);
-  ctx.strokeStyle="rgba(79,124,255,.14)";
-  ctx.lineWidth=2*dpr;
-  ctx.beginPath(); ctx.moveTo(cx0,0); ctx.lineTo(cx0,h); ctx.moveTo(cx1,0); ctx.lineTo(cx1,h); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0,cy0); ctx.lineTo(w,cy0); ctx.moveTo(0,cy1); ctx.lineTo(w,cy1); ctx.stroke();
+  ctx.clearRect(0,0,w,h);
+  strokeFsGrid(ctx, w, h, dpr);
+  _fsGridFresh = true;
 }
 const enterZonesBtn=$("#enterZonesBtn");
 if(enterZonesBtn) enterZonesBtn.onclick = ()=> enterFullscreenGesture();
@@ -1297,16 +1359,15 @@ function onHandsResults(results){
     lastFpsUpdate=t; frames=0;
   }
   gestureHud(fps? `Hand — ${fps} fps` : "Hand —");
-  syncFsOverlayState();
   const ctx = overlay.getContext("2d");
   const dpr = window.devicePixelRatio||1;
   ctx.clearRect(0,0,overlay.width, overlay.height);
   if(!results.multiHandLandmarks || results.multiHandLandmarks.length===0){
     gestureHud("No hand");
-    zoneLabel.textContent="—";
-    confLabel.textContent="—";
+    setZoneHud("—");
+    if(confLabel && confLabel._v !== "—"){ confLabel._v = "—"; confLabel.textContent = "—"; }
     resetDwell();
-    const fsO2=$("#fsOverlay"); if(fsO2){ const c2=fsO2.getContext("2d"); if(c2 && fsO2.width) c2.clearRect(0,0,fsO2.width,fsO2.height); syncFsOverlayState(); }
+    if(!_fsGridFresh){ const fsO2=$("#fsOverlay"); if(fsO2 && fsO2.width) syncFsOverlayState(); }
     const hM2=$("#handMini"); if(hM2){ const c3=hM2.getContext("2d"); if(c3 && hM2.width) c3.clearRect(0,0,hM2.width,hM2.height); }
     if(state.drawing && (t - state.lastDrawEnd > 650)){
       finalizeStroke();
@@ -1316,7 +1377,8 @@ function onHandsResults(results){
   const landmarks = results.multiHandLandmarks[0];
   const handedness = results.multiHandedness && results.multiHandedness[0] ? results.multiHandedness[0].label : "Unknown";
   const score = results.multiHandedness && results.multiHandedness[0] ? (results.multiHandedness[0].score||0) : 0;
-  confLabel.textContent = handedness + (score?` ${(score*100|0)}%`:"");
+  const confTxt = handedness + (score?` ${(score*100|0)}%`:"");
+  if(confLabel && confLabel._v !== confTxt){ confLabel._v = confTxt; confLabel.textContent = confTxt; }
   if(showLandmarks.checked && window.drawConnectors && window.drawLandmarks){
     ctx.save();
     if(mirrorToggle.checked){
@@ -1327,15 +1389,8 @@ function onHandsResults(results){
     drawLandmarks(ctx, landmarks, {color:"rgba(255,255,255,.95)", lineWidth:1, radius:3*dpr});
     ctx.restore();
   }
-// Accuracy: show the MediaPipe hand skeleton on the FULLSCREEN camera too
-  const fsO=$("#fsOverlay");
-  if(fsO){
-    const fsRect=fsO.getBoundingClientRect();
-    if(fsRect.width > 50){
-      drawHandOnCanvas(fsO, landmarks, mirrorToggle.checked);
-      syncFsOverlayState(); // redraw zone grid on top of skeleton
-    }
-  }
+// Fullscreen overlay: ONE clear + grid + skeleton per frame (see fsPaint).
+  fsPaint(landmarks);
   const handMini=$("#handMini");
   if(handMini){
     const hRect=handMini.getBoundingClientRect();
@@ -1368,7 +1423,7 @@ const twoRaw = isTwoFinger(landmarks);
   if(two){
     resetDwell();
     gestureHud("✌ Two-finger — drawing");
-    zoneLabel.textContent = "DRAW";
+    setZoneHud("DRAW");
     // Automatically redirect to the air-draw page when two fingers are confirmed
     const curPage = [...$$(".page")].find(p=> p.classList.contains("active"));
     if(state.connected && curPage && curPage.id!=="page-draw"){
@@ -1394,7 +1449,7 @@ const twoRaw = isTwoFinger(landmarks);
   }
   if(thumbDown){
     gestureHud("👎 Thumb down — hold " + Math.ceil((1-dwellProgress())*state.DWELL_MS/1000) + "s");
-    zoneLabel.textContent="BACK (thumb down)";
+    setZoneHud("BACK (thumb down)");
     enterDwell("thumbdown");
     drawDwellRing(dwellProgress());
     if(dwellProgress()>=1 && !state._dwellFired){
@@ -1406,7 +1461,7 @@ const twoRaw = isTwoFinger(landmarks);
   }
   if(fist){
     gestureHud("✊ Fist = OK — hold " + Math.ceil((1-dwellProgress())*state.DWELL_MS/1000) + "s");
-    zoneLabel.textContent="CENTER (fist)";
+    setZoneHud("CENTER (fist)");
     $$("#dpadMini .mini-btn").forEach(b=> b.classList.toggle("active", b.dataset.zone==="CENTER"));
     enterDwell("fist");
     drawDwellRing(dwellProgress());
@@ -1419,7 +1474,7 @@ const twoRaw = isTwoFinger(landmarks);
   }
   if(one){
     const zone = mapZone(px, py);
-    zoneLabel.textContent = zone;
+    setZoneHud(zone);
     $$("#dpadMini .mini-btn").forEach(b=> b.classList.toggle("active", b.dataset.zone===zone));
     if(zone==="CENTER"){
       gestureHud("Open hand — center idle (hold fist = OK)");
@@ -1439,7 +1494,7 @@ const twoRaw = isTwoFinger(landmarks);
     }
   } else {
     gestureHud("Hand detected — adjust fingers");
-    zoneLabel.textContent="—";
+    setZoneHud("—");
     resetDwell();
   }
 }
@@ -1571,7 +1626,11 @@ async function startCamera(){
     if(typeof Camera !== "undefined"){
       camera = new Camera(video, {
         onFrame: async ()=>{
-          if(video.readyState>=2) await hands.send({image: video});
+          // In-flight guard: never stack inference calls (the #1 lag spiral)
+          if(_inferBusy || video.readyState<2) return;
+          _inferBusy = true;
+          try{ await hands.send({image: video}); }catch{}
+          _inferBusy = false;
         },
         width: 640,
         height: 480,
@@ -1580,7 +1639,11 @@ async function startCamera(){
     } else {
       const loop = async ()=>{
         if(!running) return;
-        if(video.readyState>=2) await hands.send({image: video});
+        if(video.readyState>=2 && !_inferBusy){
+          _inferBusy = true;
+          try{ await hands.send({image: video}); }catch{}
+          _inferBusy = false;
+        }
         rafId = requestAnimationFrame(loop);
       };
       loop();
@@ -1606,7 +1669,7 @@ async function stopCamera(){
   videoWrap.classList.remove("has-video");
   setCamUI(false);
   gestureHud("Camera off");
-  zoneLabel.textContent="—";
+  setZoneHud("—");
   const ctx=overlay.getContext("2d"); ctx.clearRect(0,0,overlay.width, overlay.height);
   drawZones();
 }

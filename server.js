@@ -20,6 +20,7 @@ const url = require('url');
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 const BRIDGE_PORT = 5001; // also listen on 5001 for backward compat (local only)
 const transport = require('./cast-transport'); // ADB + Chromecast Cast v2 + DIAL routing
+let LAN_URL = ''; // filled at listen time; shared with phones via /status + share links
 
 // Cloud deployment configuration
 const config = {
@@ -352,7 +353,7 @@ function handleApi(req, res){
 
   if(p==='/status' || p==='/api/status'){
     res.writeHead(200, {'Content-Type':'application/json'});
-    res.end(JSON.stringify({ ok:true, bridge:true, tvs: discovered, states: Object.fromEntries(states), transports:{adb:true, cast:transport.castAvailable()} }));
+    res.end(JSON.stringify({ ok:true, bridge:true, tvs: discovered, states: Object.fromEntries(states), transports:{adb:true, cast:transport.castAvailable()}, lanUrl: LAN_URL || undefined }));
     return true;
   }
   if(p==='/scan' || p==='/api/scan'){
@@ -531,7 +532,8 @@ function createMainServer(){
     console.log(`\n✅ TV Control Hub running at http://localhost:${PORT}`);
     console.log(`   Website: http://localhost:${PORT}/`);
     if(lanIp){
-      console.log(`   📱 From your PHONE on the same Wi-Fi, open:  http://${lanIp}:${PORT}/`);
+      LAN_URL = `http://${lanIp}:${PORT}`;
+      console.log(`   📱 From your PHONE on the same Wi-Fi, open:  ${LAN_URL}/`);
       console.log(`      (TV and phone must be on the SAME network as this PC: ${lanIp})`);
     }
     console.log(`   API:     http://localhost:${PORT}/status  http://localhost:${PORT}/scan`);
