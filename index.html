@@ -49,7 +49,7 @@
         <button class="btn go-live" id="goLiveBtn">🚀 Go Live — bring everything up</button>
       </div>
       <div class="limit-banner">
-        <strong>⚠️ Browser limit:</strong> Web pages cannot silently scan your LAN (no mDNS/SSDP). This site shows <em>simulated discovery</em> + manual IP + optional local bridge.
+        <strong>✅ Real control only:</strong> Discover + control your actual TV on the <em>same Wi-Fi</em>. No fake devices are shown. Run <code>node server.js</code> on your PC and open the printed LAN URL (e.g. <code>http://192.168.1.67:5000</code>) from any phone/laptop on the same network to control your TV.
       </div>
     </div>
     <div class="hero-visual">
@@ -70,10 +70,10 @@
   <div class="container">
     <div class="section-head">
       <h2><span class="num">01</span> Discover TVs on your network</h2>
-      <p>Scans the inferred subnet, shows real mDNS names if bridge is running, otherwise presents realistic mock results you can connect to. Add your TV IP manually to connect for real.</p>
+      <p>Scans the same Wi-Fi via the local server's SSDP and shows only real TVs. Add your TV IP manually too. Your PC running <code>node server.js</code> does the discovery + ADB; open its LAN URL from any phone on the same Wi-Fi.</p>
       <details class="explain">
-        <summary>How discovery works on the web ℹ️</summary>
-        <p>Native Android uses NSD/mDNS + Cast SDK. Browsers block raw socket discovery. We: (1) infer your subnet via WebRTC, (2) simulate scan UI (instant feel), (3) allow <code>192.168.x.x</code> direct connect, (4) ship a tiny Node bridge (<code>node bridge/server.js</code>) that does real SSDP on <code>:3001</code> — page auto-detects it at <code>http://localhost:3001</code>.</p>
+        <summary>Why this must run on your home Wi-Fi ℹ️</summary>
+        <p>ADB and SSDP only work between devices on the <strong>same local network</strong>. A cloud server is not on your Wi-Fi, so it can never reach your TV's private IP (e.g. <code>192.168.1.84</code>). Instead, run <code>node server.js</code> on your PC — it becomes the bridge — then open <code>http://&lt;PC-LAN-IP&gt;:5000</code> from your phone to control the TV.</p>
       </details>
     </div>
 

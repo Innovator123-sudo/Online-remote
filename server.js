@@ -446,12 +446,29 @@ function createMainServer(){
   });
 
   server.listen(PORT, ()=>{
+    const os = require('os');
+    let lanIp = '';
+    try {
+      const nets = os.networkInterfaces();
+      for(const name of Object.keys(nets)){
+        for(const n of nets[name]||[]){
+          if(n.family === 'IPv4' && !n.internal && (n.address.startsWith('192.168.') || n.address.startsWith('10.') || n.address.startsWith('172.'))){
+            lanIp = n.address; break;
+          }
+        }
+        if(lanIp) break;
+      }
+    } catch {}
     console.log(`\n✅ TV Control Hub running at http://localhost:${PORT}`);
     console.log(`   Website: http://localhost:${PORT}/`);
+    if(lanIp){
+      console.log(`   📱 From your PHONE on the same Wi-Fi, open:  http://${lanIp}:${PORT}/`);
+      console.log(`      (TV and phone must be on the SAME network as this PC: ${lanIp})`);
+    }
     console.log(`   API:     http://localhost:${PORT}/status  http://localhost:${PORT}/scan`);
     console.log(`   Also listening on http://localhost:${BRIDGE_PORT} for old app.js compat`);
-    console.log(`\n   Wi-Fi discovery: SSDP <3s, website shows TVs in <2s`);
-    console.log(`   No bridge needed — demo TVs appear instantly. Real TVs via SSDP if on same Wi-Fi.\n`);
+    console.log(`\n   Wi-Fi discovery: SSDP <3s, website shows real TVs in <2s (same network only)`);
+    console.log(`   Real control via ADB on the TV's port 5555. Open the URL on any device on this Wi-Fi.\n`);
   });
 
   // Also listen on 5001 for old app.js that fetches http://localhost:5001/status (local only, not on hosted)
