@@ -33,6 +33,52 @@ const KEYEVENT = {
   SEARCH:84, TEXT:0,
 };
 
+function fetchFriendlyName(locationUrl, timeout=1500) {
+  return new Promise((resolve) => {
+    try {
+      const req = http.get(locationUrl, { timeout }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          const fnMatch = data.match(/<friendlyName[^>]*>([^<]+)<\/friendlyName>/i);
+          if (fnMatch) { resolve(fnMatch[1].trim()); return; }
+          const mdMatch = data.match(/<modelName[^>]*>([^<]+)<\/modelName>/i);
+          resolve(mdMatch ? mdMatch[1].trim() : '');
+        });
+      });
+      req.on('error', () => resolve(''));
+      req.on('timeout', () => { try { req.destroy(); } catch{}; resolve(''); });
+    } catch { resolve(''); }
+  });
+}
+
+function buildDeviceName(server, st, location, fallbackIp) {
+  let name = '';
+  if (/chromecast|google/i.test(server + ' ' + st)) {
+    name = 'Chromecast';
+  } else if (/android/i.test(server + ' ' + st)) {
+    name = 'Android TV';
+  } else if (/roku/i.test(server)) {
+    name = 'Roku TV';
+  } else if (/fire.?tv/i.test(server)) {
+    name = 'Fire TV';
+  } else if (/bravia|sony/i.test(server)) {
+    name = 'Sony TV';
+  } else if (/tcl/i.test(server)) {
+    name = 'TCL TV';
+  } else if (/hisense/i.test(server)) {
+    name = 'Hisense TV';
+  } else {
+    name = (server || '').split(' ')[0] || '';
+    if (!name && location) {
+      try { name = new URL(location).hostname; } catch {}
+    }
+    name = name || `TV`;
+  }
+  if (!/tv|chromecast|cast/i.test(name)) name = `${name} TV`;
+  return name.replace(/UPnP\/.*/,'').trim() || `TV ${fallbackIp}`;
+}
+
 function findAdbBin(){
   const candidates = [
     path.join(__dirname, '..', 'platform-tools', process.platform==='win32'?'adb.exe':'adb'),
@@ -79,19 +125,37 @@ function rawSsdpScan(timeout=2200){
   return new Promise((resolve)=>{
     const dgram = require('dgram');
     const found = new Map();
+    const nameFetches = [];
     const socket = dgram.createSocket({type:'udp4', reuseAddr:true});
     let finished=false;
     const finish=()=>{
       if(finished) return; finished=true;
       try{ socket.close(); }catch{}
-      // merge into global discovered
-      for(const [ip,info] of found){
-        if(!discovered.some(d=> d.ip===ip)){
-          discovered.push(info);
-          console.log(`[ssdp-raw] found ${info.name} at ${ip} ST=${info.st}`);
+      // Enrich names from device description XML (parallel, max 1500ms)
+      for(const [ip, info] of found){
+        if(info.location){
+          nameFetches.push(
+            fetchFriendlyName(info.location, 1500).then(realName => {
+              if(realName && found.has(ip)){
+                const dev = found.get(ip);
+                const oldName = dev.name;
+                dev.name = realName.slice(0,40);
+                if(!/tv|chromecast|cast|dongle/i.test(dev.name)) dev.name = `${dev.name} TV`;
+                if(oldName !== dev.name) console.log(`[ssdp-raw] enriched ${ip}: "${oldName}" → "${dev.name}"`);
+              }
+            }).catch(()=>{})
+          );
         }
       }
-      resolve();
+      Promise.allSettled(nameFetches).then(()=>{
+        for(const [ip,info] of found){
+          if(!discovered.some(d=> d.ip===ip)){
+            discovered.push(info);
+            console.log(`[ssdp-raw] found ${info.name} at ${ip} ST=${info.st}`);
+          }
+        }
+        resolve();
+      });
     };
     socket.on('error', (err)=>{
       console.log('[ssdp-raw] socket error', err.message);
@@ -108,12 +172,10 @@ function rawSsdpScan(timeout=2200){
       const server = headers['SERVER']||'';
       const location = headers['LOCATION']||'';
       const isTv = /dial|android|google|chromecast|cast|roku|firetv|philips|sony|tcl|hisense|bravia|upnp|mediarenderer|tv/i.test(st+' '+server+' '+location);
-      if(isTv){ // strict TV only, no generic routers
+      if(isTv){
         if(!found.has(rinfo.address)){
-          let name = server.split(' ')[0] || '';
-          try{ if(!name && location) name = new URL(location).hostname; }catch{}
-          name = (name||`TV ${rinfo.address}`).replace(/UPnP\/.*/,'').trim() || `TV ${rinfo.address}`;
-          found.set(rinfo.address, { name: name.slice(0,40), ip:rinfo.address, model: st||'Android TV', st, location, server });
+          const name = buildDeviceName(server, st, location, rinfo.address);
+          found.set(rinfo.address, { name: name.slice(0,40), ip:rinfo.address, model:st||'Android TV', st, location, server });
         }
       }
     });
@@ -153,16 +215,25 @@ async function ssdpScan(){
         const isTv = /dial|android|google|chromecast|cast|roku|firetv|philips|sony|tcl|hisense|bravia|upnp|mediarenderer|tv/i.test(st + ' ' + server + ' ' + location);
         if (isTv) {
           if (!discovered.some(d => d.ip === rinfo.address)) {
-            let name = deviceName || '';
-            if(!name && /chromecast/i.test(server)) name='Chromecast TV';
-            else if(!name && /android/i.test(server)) name='Android TV';
-            else if(!name && location){ try{ name=new URL(location).hostname.replace('.local',''); }catch{} }
-            else if(!name && server) name=server.split(',')[0].split(' ')[0];
-            name = (name||`TV ${rinfo.address}`);
-            if(!/tv/i.test(name)) name = `TV ${name}`;
+            const deviceName = headers['X-Device-Name'] || headers['X-Android-Device-Name'] || '';
+            let name = deviceName || buildDeviceName(server, st, location, rinfo.address);
+            if(!/tv|chromecast|cast/i.test(name)) name = `${name} TV`;
             name = name.replace(/UPnP.*/,'').trim() || `TV ${rinfo.address}`;
-            discovered.push({ name: name.slice(0,40), ip:rinfo.address, model: st||'Android TV', via:'ssdp' });
+            discovered.push({ name: name.slice(0,40), ip:rinfo.address, model:st||'Android TV', via:'ssdp', location });
             console.log(`[ssdp] Found: ${name} at ${rinfo.address}`);
+            if(location) {
+              fetchFriendlyName(location, 1500).then(realName => {
+                if(realName) {
+                  const dev = discovered.find(d => d.ip === rinfo.address);
+                  if(dev) {
+                    const old = dev.name;
+                    dev.name = realName.slice(0,40);
+                    if(!/tv|chromecast|cast/i.test(dev.name)) dev.name = `${dev.name} TV`;
+                    console.log(`[ssdp] enriched ${rinfo.address}: "${old}" → "${dev.name}"`);
+                  }
+                }
+              }).catch(()=>{});
+            }
           }
         }
       });

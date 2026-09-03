@@ -30,6 +30,47 @@ const NAME_FILTER = (getArg('--filter', getArg('--name', 'tv')) || 'tv').toLower
 function log(...a){ console.log(...a); }
 function vlog(...a){ if(VERBOSE) console.log('[verbose]', ...a); }
 
+// Fetch real device name from SSDP LOCATION XML (friendlyName / modelName)
+function fetchFriendlyName(locationUrl, timeout=1500) {
+  return new Promise((resolve) => {
+    try {
+      const req = http.get(locationUrl, { timeout }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          const fnMatch = data.match(/<friendlyName[^>]*>([^<]+)<\/friendlyName>/i);
+          if (fnMatch) { resolve(fnMatch[1].trim()); return; }
+          const mdMatch = data.match(/<modelName[^>]*>([^<]+)<\/modelName>/i);
+          resolve(mdMatch ? mdMatch[1].trim() : '');
+        });
+      });
+      req.on('error', () => resolve(''));
+      req.on('timeout', () => { try { req.destroy(); } catch{}; resolve(''); });
+    } catch { resolve(''); }
+  });
+}
+
+function buildDeviceName(server, st, location, fallbackIp) {
+  let name = '';
+  if (/chromecast|google/i.test(server + ' ' + st)) {
+    name = 'Chromecast';
+  } else if (/android/i.test(server + ' ' + st)) {
+    name = 'Android TV';
+  } else if (/roku/i.test(server)) {
+    name = 'Roku TV';
+  } else if (/fire.?tv/i.test(server)) {
+    name = 'Fire TV';
+  } else {
+    name = (server || '').split(' ')[0] || '';
+    if (!name && location) {
+      try { name = new URL(location).hostname; } catch {}
+    }
+    name = name || `TV`;
+  }
+  if (!/tv|chromecast|cast/i.test(name)) name = `${name} TV`;
+  return name.replace(/UPnP\/.*/,'').trim() || `TV ${fallbackIp}`;
+}
+
 // ---------- subnet helpers ----------
 function getLocalNetworks(){
   const nets = os.networkInterfaces();
@@ -64,6 +105,7 @@ function buildMSearch(st){
 
 async function ssdpScan(timeout = TIMEOUT){
   const found = new Map(); // ip -> {ip, name, st, location, server, headers}
+  const nameFetches = [];
   const socket = dgram.createSocket({type:'udp4', reuseAddr:true});
 
   return new Promise((resolve)=>{
@@ -71,7 +113,23 @@ async function ssdpScan(timeout = TIMEOUT){
     const finish = ()=>{
       if(finished) return; finished=true;
       try{ socket.close(); }catch{}
-      resolve(Array.from(found.values()));
+      // Enrich each found device with real friendlyName from LOCATION XML (parallel)
+      for(const [ip, info] of found){
+        if(info.location){
+          nameFetches.push(
+            fetchFriendlyName(info.location, 1500).then(realName => {
+              if(realName && found.has(ip)){
+                const dev = found.get(ip);
+                const oldName = dev.name;
+                dev.name = realName.slice(0,40);
+                if(!/tv|chromecast|cast|dongle/i.test(dev.name)) dev.name = `${dev.name} TV`;
+                log(`  → enriched ${ip}: "${oldName}" → "${dev.name}"`);
+              }
+            }).catch(()=>{})
+          );
+        }
+      }
+      Promise.allSettled(nameFetches).then(()=> resolve(Array.from(found.values())));
     };
 
     socket.on('error', (err)=>{
@@ -102,26 +160,8 @@ async function ssdpScan(timeout = TIMEOUT){
       const shouldKeep = isTvLike; // strict: don't keep generic location devices (routers)
       if(shouldKeep){
         if(!found.has(rinfo.address)){
-          // Extract TV-friendly name — ensure it contains "TV" for search
-          let name = '';
-          if(/chromecast/i.test(server + ' ' + st)) name = `Chromecast TV ${rinfo.address.split('.').pop()}`;
-          else if(/android tv/i.test(server + ' ' + st)) name = `Android TV ${rinfo.address.split('.').pop()}`;
-          else if(/google tv/i.test(server)) name = `Google TV ${rinfo.address.split('.').pop()}`;
-          else if(/roku/i.test(server)) name = `Roku TV ${rinfo.address.split('.').pop()}`;
-          else if(/fire tv/i.test(server)) name = `Fire TV ${rinfo.address.split('.').pop()}`;
-          else {
-            name = server.split(' ')[0] || '';
-            if(location){
-              try{
-                const u = new URL(location);
-                name = name || u.hostname;
-              }catch{}
-            }
-            name = name || `TV ${rinfo.address}`;
-          }
-          // Ensure name contains TV for search filter
-          if(!/tv/i.test(name)) name = `TV ${name}`;
-          name = name.replace(/UPnP\/.*/, '').trim() || `TV ${rinfo.address}`;
+          // Use the same real-name logic as the bridge: build + then enrich from XML
+          let name = buildDeviceName(server, st, location, rinfo.address);
           found.set(rinfo.address, {
             ip: rinfo.address,
             name: name.slice(0,40),
