@@ -544,7 +544,8 @@ function showConnected(){
   $("#remotePanel").classList.remove("hidden");
   $("#tvAvatar").textContent = state.connected.icon;
   $("#tvName").textContent = state.connected.name;
-  $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.model} • Paired`;
+  const isDemo = isHostedPage && state.connected.via === "demo";
+  $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.model} • Paired${isDemo ? ' • Demo Mode' : ''}`;
   renderLog();
 }
 function disconnect(){
@@ -601,6 +602,16 @@ async function sendCommand(cmd, payload=""){
   }
   log(`${cmd}${payload?` → ${payload}`:""}`, "good");
   toast(`${cmd}${payload?` ${payload}`:""} → ${state.connected.name}`);
+
+  // Hosted demo mode: if connected TV is a demo TV on GitHub Pages / Vercel
+  // there is no backend — simulate the command locally with visual feedback
+  if(isHostedPage && state.connected.via === "demo"){
+    log(`[Demo] ${cmd}${payload?` "${payload}"`:""} simulated on ${state.connected.name}`, "good");
+    const map = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
+    if(map[cmd]) flashZone(map[cmd]);
+    return;
+  }
+
   // Always use bridge mode for actual command delivery — direct TV HTTP fails with no-cors
   // The bridge/server.js handles real ADB communication on port 5555
   const sendPayload = {ip: state.connected.ip, cmd, payload};
@@ -1714,11 +1725,13 @@ drawZones();
 renderTvs(); renderLog();
 log("Ready. Scan for TVs, connect, then enable camera.", "warn");
 log("Center zone is dead — keypad rests there.", "warn");
- // Bridge/status status
- if(state.bridge){
-   log("Bridge connected — commands sent via bridge", "good");
- } else {
-   log("No bridge — direct ADB fallback (requires local server at " + window.location.origin + "/cmd)", "warn");
+// Bridge/status status
+if(state.bridge){
+  log("Bridge connected — commands sent via bridge", "good");
+} else if(isHostedPage){
+  log("Hosted demo mode — commands simulated locally. Run \`node server.js\` on your PC for real TV control.", "warn");
+} else {
+  log("No bridge — direct ADB fallback (requires local server at " + window.location.origin + "/cmd)", "warn");
 }
 window.TVHub = {state, sendCommand, addTv, recognizeLetter};
 // In hosted mode (Vercel/GitHub Pages), add demo TVs immediately so the UI always shows TVs
