@@ -14,13 +14,17 @@ const now = ()=> performance.now();
 
 function toast(msg, type=""){
   const stack = $("#toastStack");
-  if(!stack) return;
+  if(!stack) return null;
+  // Cap pile-up (screenshot bug: "Checking..." + error stacked over Pair inputs).
+  while(stack.children.length >= 3) stack.firstChild.remove();
   const el = document.createElement("div");
   el.className = `toast ${type}`;
   el.textContent = msg;
+  el.onclick = ()=> el.remove();
   stack.appendChild(el);
   setTimeout(()=> el.style.opacity = "0", 2200);
   setTimeout(()=> el.remove(), 2600);
+  return el;
 }
 let _lastErrToastAt = 0;
 function errToastOnce(msg){
@@ -357,8 +361,15 @@ function updateUI(){
   } else {
     $("#heroTvName").textContent = "No TV yet";
   }
-  const kr = $("#keyRow");
-  if(kr) kr.style.display = relayKey ? "none" : "";
+  // Relay key is ALWAYS shown on the website (never hidden after save).
+  const rk = $("#relayKey");
+  if(rk && document.activeElement !== rk) rk.value = relayKey || "";
+  const ks = $("#keyStatus");
+  if(ks) ks.textContent = relayKey ? "✓ saved on this device — shown below" : "(paste once from your invite link — then it stays shown here)";
+  const kshow = $("#keyShow");
+  if(kshow) kshow.textContent = relayKey ? `Current key: ${relayKey}` : "";
+  const tgl = $("#toggleKeyBtn");
+  if(tgl && rk) tgl.textContent = rk.type === "password" ? "Show" : "Hide";
   const bh = $("#bridgeHint");
   if(bh) bh.innerHTML = state.bridge
     ? `Helper OK — TV remote signals ready. Scan auto-connects your TV.`
@@ -418,12 +429,18 @@ function flashCmd(cmd){
 $$(".dpad-btn, .qbtn").forEach(b=>{ b.onclick = ()=>{ if(b.dataset.cmd) sendCommand(b.dataset.cmd); }; });
 $("#disconnectBtn").onclick = disconnect;
 $("#scanBtn").onclick = ()=>{
+  if(state._cloudBusy) return;
   if(!state.bridge){ cloudRefresh(true); checkBridge(); return; }
   doScan();
 };
 // No-helper path: re-check every known TV through the cloud relay and
 // auto-connect the first one that answers. Silent on boot, chatty on tap.
 async function cloudRefresh(manual){
+  if(state._cloudBusy) return;
+  state._cloudBusy = true;
+  const scanBtn = $("#scanBtn");
+  if(scanBtn) scanBtn.disabled = true;
+  try{
   let raw = null, savedName = "Saved TV";
   try{ raw = localStorage.getItem("savedTvIp"); savedName = localStorage.getItem("savedTvName") || savedName; }catch{}
   const cands = [];
@@ -434,19 +451,34 @@ async function cloudRefresh(manual){
     return;
   }
   if(!relayKey){ if(manual) toast("Paste your relay key below (your invite link has it)", "bad"); return; }
-  if(manual) toast("Checking saved TV through the cloud relay…");
-  for(const c of cands){
-    const t = parseTarget(c.ip);
-    if(!t.host || isLanIpv4(t.host)) continue; // home IPs need the tiny helper, not the cloud
+  // Home-only candidates can't go through the cloud — tell the truth instead
+  // of the generic "couldn't reach" (this was the screenshot bug).
+  const cloudable = cands.filter(c=>{ const t = parseTarget(c.ip); return t.host && !isLanIpv4(t.host); });
+  if(!cloudable.length){
+    if(manual) toast("Saved TV is a home IP — run the tiny helper (Termux / home PC), then Scan.", "warn");
+    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Run the helper, then Scan.");
+    setTimeout(()=> setScanStatus(""), 6000);
+    return;
+  }
+  const checkingEl = manual ? toast("Checking saved TV through the cloud relay…") : null;
+  if(manual) setScanStatus("Checking saved TV through the cloud relay…");
+  let connected = false;
+  for(const c of cloudable){
     addTv({name:c.name, ip:c.ip}, true);
     const tv = state.tvs.find(x=> x.ip === c.ip);
     if(tv){
       const v = await validateTv(tv);
-      if(v.ok){ if(v.via) tv.via = v.via; connectTv(tv); return; }
+      if(v.ok){ if(checkingEl) checkingEl.remove(); setScanStatus(""); if(v.via) tv.via = v.via; connectTv(tv); connected = true; return; }
     }
   }
-  if(manual) toast("Cloud relay couldn't reach a saved TV — TV awake? Reachable from the internet? Key correct?", "bad");
+  if(checkingEl) checkingEl.remove();
+  setScanStatus("");
+  if(manual && !connected) toast("Cloud relay couldn't reach a saved TV — TV awake? Reachable from the internet? Key correct?", "bad");
   updateUI();
+  }finally{
+    state._cloudBusy = false;
+    if(scanBtn) scanBtn.disabled = false;
+  }
 }
 $("#addManualBtn").onclick = async ()=>{
   const raw = $("#manualIp").value.trim();
@@ -458,12 +490,26 @@ $("#addManualBtn").onclick = async ()=>{
   if(tv) pairConnect(tv);
 };
 const rkInput = $("#relayKey");
-if(rkInput && !rkInput.value) rkInput.value = relayKey;
+if(rkInput) rkInput.value = relayKey || "";
 $("#saveKeyBtn").onclick = ()=>{
   relayKey = (($("#relayKey") || {}).value || "").trim();
   try{ localStorage.setItem("relayKey", relayKey); }catch{}
   toast(relayKey ? "Key saved — connect your TV" : "Key cleared", relayKey ? "good" : "");
   updateUI();
+};
+const toggleKeyBtn = $("#toggleKeyBtn");
+if(toggleKeyBtn) toggleKeyBtn.onclick = ()=>{
+  const inp = $("#relayKey");
+  if(!inp) return;
+  inp.type = inp.type === "password" ? "text" : "password";
+  toggleKeyBtn.textContent = inp.type === "password" ? "Show" : "Hide";
+};
+const copyKeyBtn = $("#copyKeyBtn");
+if(copyKeyBtn) copyKeyBtn.onclick = async ()=>{
+  const v = (($("#relayKey") || {}).value || relayKey || "").trim();
+  if(!v){ toast("No key to copy", "bad"); return; }
+  try{ await navigator.clipboard.writeText(v); toast("Relay key copied", "good"); }
+  catch{ try{ $("#relayKey").select(); document.execCommand("copy"); toast("Relay key copied", "good"); }catch{ toast("Copy failed — long-press to copy", "bad"); } }
 };
 $("#pairBtn").onclick = async ()=>{
   const host = (($("#pairHost") || {}).value || "").trim();
