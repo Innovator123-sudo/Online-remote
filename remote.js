@@ -81,8 +81,9 @@ async function detectSubnet(){
 }
 
 // ---------- HELPER CLIENT (quiet, cached, no log spam) ----------
-// The helper is just `node server.js` on your network — Termux on this very
-// phone works: the page then talks to http://localhost:5000 same-origin.
+// The helper is just `node helper.js` on your home network — run it on a home
+// PC / laptop (same Wi-Fi as the TV), then open its http://<PC-IP>:5000 URL
+// on this phone, or point this page at it via the helper address box.
 let bridgeBase = null;
 try{ bridgeBase = localStorage.getItem("bridgeBase") || null; }catch{}
 try{
@@ -374,8 +375,8 @@ function updateUI(){
   if(bh) bh.innerHTML = state.bridge
     ? `Helper OK — TV remote signals ready. Scan auto-connects your TV.`
     : isPublicPage()
-    ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). For same-Wi-Fi auto-scan, run the tiny helper on this phone (Termux) or a home PC, then Scan.`
-    : `Helper not found. Run <code>node helper.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan (auto-connects).`;
+    ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). For same-Wi-Fi control, run the helper on a home PC, open its address on this phone, then Scan.`
+    : `Helper not found. On a home PC (same Wi-Fi as the TV) run <code>npm install &amp;&amp; node helper.js</code> — then Scan (auto-connects).`;
   // The helper setup box was permanently hidden (class="hidden", no JS ever
   // removed it) — so users on a public deploy with a 192.168.x.x TV were told
   // to "run the helper" with no copy-paste command visible (screenshot bug).
@@ -475,14 +476,14 @@ async function cloudRefresh(manual){
   // of the generic "couldn't reach" (this was the screenshot bug).
   const cloudable = cands.filter(c=>{ const t = parseTarget(c.ip); return t.host && !isLanIpv4(t.host); });
   if(!cloudable.length){
-    if(manual) toast("Saved TV is a home IP — run the tiny helper (Termux / home PC), then Scan.", "warn");
-    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Run the helper below, then Scan.");
+    if(manual) toast("Saved TV is a home IP — run the helper on a home PC (same Wi-Fi), then Scan.", "warn");
+    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Start the helper on a home PC, then Scan.");
     try{
       const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
       const ph = $("#pairHost");
       if(ph && !ph.value && cands[0]) ph.value = parseTarget(cands[0].ip).host || "";
       const hs = $("#helperStatus");
-      if(hs) hs.textContent = "Paste the command in Termux (same Wi-Fi), then tap “I've started it”.";
+      if(hs) hs.textContent = "On a home PC run the command above, then tap “I've started it”.";
     }catch{}
     updateUI();
     setTimeout(()=> setScanStatus(""), 9000);
@@ -520,21 +521,46 @@ $("#addManualBtn").onclick = async ()=>{
   const tv = state.tvs.find(x=> x.ip === raw);
   if(tv) pairConnect(tv);
 };
-// Helper setup box: previously dead buttons (no handlers) + permanently hidden.
-// Wire Copy (Termux command) and "Check again" (re-probe helper, then scan).
+// Helper setup box: Copy (home-PC command) + helper address + "Check again"
+// (re-probe helper, then scan). No Termux / no app install on this phone.
 const copyHelperBtn = $("#copyHelperBtn");
 if(copyHelperBtn) copyHelperBtn.onclick = async ()=>{
   const cmd = (($("#helperCmd") || {}).textContent || "").trim();
   if(!cmd) return;
-  try{ await navigator.clipboard.writeText(cmd); toast("Helper command copied — paste it in Termux", "good"); }
+  try{ await navigator.clipboard.writeText(cmd); toast("Helper command copied — run it on your home PC", "good"); }
   catch{
     try{
       const r = document.createRange(); r.selectNodeContents($("#helperCmd"));
       const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
       document.execCommand("copy"); sel.removeAllRanges();
-      toast("Helper command copied — paste it in Termux", "good");
+      toast("Helper command copied — run it on your home PC", "good");
     }catch{ toast("Copy failed — long-press the command to copy", "bad"); }
   }
+};
+// Point this hosted page at a home-PC helper without leaving it:
+// type its http://<PC-IP>:5000 address, tap Use, then Scan.
+const useHelperBtn = $("#useHelperBtn");
+if(useHelperBtn) useHelperBtn.onclick = async ()=>{
+  let v = (($("#helperAddr") || {}).value || "").trim().replace(/\/+$/, "");
+  if(!v){ toast("Type the helper address from its terminal — e.g. http://192.168.1.50:5000", "bad"); return; }
+  if(!v.startsWith("http")) v = "http://" + v;
+  if(!/:\d+$/.test(v)) v += ":5000";
+  if(!/^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)){ toast("That doesn't look like a helper address — e.g. http://192.168.1.50:5000", "bad"); return; }
+  bridgeBase = v;
+  try{ localStorage.setItem("bridgeBase", v); }catch{}
+  const hs = $("#helperStatus");
+  if(hs) hs.textContent = "Checking that address…";
+  if(await probeBridgeBase(v, 2500)){
+    state.bridge = true;
+    if(hs) hs.textContent = "Helper found — scanning…";
+    toast("Helper found — scanning for your TV…", "good");
+    updateUI();
+    doScan();
+  } else {
+    if(hs) hs.textContent = "Nothing there — helper running? Same Wi-Fi? Address exact?";
+    toast("No helper at that address — PC running? Same Wi-Fi?", "bad");
+  }
+  updateUI();
 };
 const helperRetryBtn = $("#helperRetryBtn");
 if(helperRetryBtn) helperRetryBtn.onclick = async ()=>{
@@ -546,8 +572,8 @@ if(helperRetryBtn) helperRetryBtn.onclick = async ()=>{
     toast("Helper found — scanning for your TV…", "good");
     doScan();
   } else {
-    if(hs) hs.textContent = "Still not found — same Wi-Fi? Termux session still running?";
-    toast("Helper still not found — same Wi-Fi? Termux running?", "bad");
+    if(hs) hs.textContent = "Still not found — helper running on the home PC? This phone on the same Wi-Fi?";
+    toast("Helper still not found — PC running? Same Wi-Fi?", "bad");
   }
   updateUI();
 };
@@ -639,10 +665,10 @@ $("#pairBtn").onclick = async ()=>{
     try{
       const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
       const hs = $("#helperStatus");
-      if(hs) hs.textContent = "Start the helper first — then Pair.";
+      if(hs) hs.textContent = "Start the helper on a home PC first — then Pair.";
     }catch{}
     updateUI();
-    toast("Start the tiny helper below first (Termux / home PC) — then Pair", "warn");
+    toast("Start the helper on a home PC (same Wi-Fi) first — then Pair", "warn");
     checkBridge();
     return;
   }
