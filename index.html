@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Online Remote — Gesture TV Remote</title>
+<meta name="description" content="Control your TV from your phone browser. Camera grid arrows, thumbs-up OK, thumbs-down back, air-draw typing when search is open.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script>
+window._gcastOk = false;
+window.__onGCastApiAvailable = function(ok){ window._gcastOk = !!ok; };
+</script>
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="ambient-bg"></div>
+
+<div id="page-home" class="page active">
+<nav class="navbar">
+  <div class="nav-inner">
+    <a class="brand" href="#"><span class="brand-icon">◉</span><span class="brand-text">Online Remote</span></a>
+    <div class="nav-links" id="navLinks">
+      <a href="#connect">Connect</a>
+      <a href="#remote">Remote</a>
+      <a href="#gesture">Gesture</a>
+    </div>
+    <div class="nav-actions">
+      <div class="conn-pill" id="connPill"><span class="dot"></span><span id="connText">Not connected</span></div>
+      <button class="theme-btn" id="themeToggle" aria-label="Toggle theme">◐</button>
+      <button class="hamburger" id="navToggle" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <div class="eyebrow"><span class="live-dot"></span> Phone → TV • Same Wi-Fi</div>
+      <h1>Your hand <span class="accent">is the remote.</span></h1>
+      <p class="sub">Point your palm at the camera grid for <strong>arrow keys</strong>, <strong>👍 thumbs-up</strong> for OK, <strong>👎 thumbs-down</strong> for Back — and <strong>draw letters in the air</strong> to type when search is open.</p>
+      <div class="cta-row">
+        <a href="#connect" class="btn primary">Connect TV ↓</a>
+        <a href="#gesture" class="btn ghost">Try gestures ↓</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="tv-mock">
+        <div class="tv-header"><span>● ● ●</span><span id="heroTvName">No TV yet</span></div>
+        <div class="tv-screen flashy">
+          <div class="flashy-circle"></div>
+          <div class="hand-hint">👋 Palm steers the grid</div>
+          <div class="hand-hint secondary">👍 OK &nbsp;•&nbsp; 👎 Back &nbsp;•&nbsp; ✌️ Draw to type</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="connect" class="section">
+  <div class="container">
+    <div class="section-head">
+      <h2><span class="num">01</span> Connect your TV</h2>
+      <p id="connectHint">One tap, same Wi-Fi. The remote finds the best way to talk to your TV by itself.</p>
+    </div>
+    <div class="card connect-card">
+      <div id="connectedPanel" class="connected-empty">
+        <div class="big-icon">📺</div>
+        <p>Not connected</p>
+        <small>Chromecast: tap below and pick it. Android TV with the helper running: it appears by itself.</small><br>
+        <button class="btn primary" id="castBtn">📺 Connect my TV</button>
+        <div class="manual-row">
+          <input id="manualIp" type="text" inputmode="numeric" placeholder="TV IP e.g. 192.168.1.84">
+          <button class="btn small" id="addManualBtn">Add</button>
+        </div>
+      </div>
+      <div id="remotePanel" class="remote-panel hidden">
+        <div class="tv-info">
+          <div class="tv-avatar" id="tvAvatar">T</div>
+          <div>
+            <div class="tv-name" id="tvName">TV</div>
+            <div class="tv-meta" id="tvMeta">—</div>
+          </div>
+          <button class="btn ghost small" id="disconnectBtn">Disconnect</button>
+        </div>
+        <div class="tv-list" id="tvList"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="remote" class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <h2><span class="num">02</span> Remote</h2>
+      <p>Buttons, keyboard, and gestures all send the same keys.</p>
+    </div>
+    <div class="card remote-card">
+      <div class="dpad-wrap">
+        <div class="dpad" id="dpad">
+          <button class="dpad-btn up" data-cmd="UP">▲</button>
+          <button class="dpad-btn left" data-cmd="LEFT">◀</button>
+          <button class="dpad-btn center" data-cmd="OK">OK</button>
+          <button class="dpad-btn right" data-cmd="RIGHT">▶</button>
+          <button class="dpad-btn down" data-cmd="DOWN">▼</button>
+        </div>
+      </div>
+      <div class="quick-grid">
+        <button class="qbtn" data-cmd="HOME">⌂ Home</button>
+        <button class="qbtn" data-cmd="BACK">↩ Back</button>
+        <button class="qbtn" data-cmd="MUTE">🔇 Mute</button>
+        <button class="qbtn" data-cmd="POWER">⏻ Power</button>
+      </div>
+      <label class="toggle search-toggle"><input type="checkbox" id="searchToggle"><span></span> 🔍 Search / typing open on TV</label>
+      <div class="field-row">
+        <input id="textInput" type="text" placeholder="Type & send to TV">
+        <button class="btn small primary" id="sendTextBtn">Send</button>
+      </div>
+      <div class="word-row">
+        <div class="draw-letter" id="drawLetter">—</div>
+        <div class="draw-word" id="drawWord"></div>
+        <button class="btn small primary" id="sendWordBtn">Send word</button>
+        <button class="btn small ghost" id="clearWordBtn">Clear</button>
+      </div>
+      <button class="btn primary fullscreen-trigger" id="enterZonesBtn">Enter Fullscreen Gesture Mode 🔲</button>
+    </div>
+  </div>
+</section>
+
+<section id="gesture" class="section">
+  <div class="container">
+    <div class="section-head">
+      <h2><span class="num">03</span> Camera grid → Arrow keys</h2>
+      <p>Hold your palm steady in a zone and the arrow fires. <strong>👍 thumbs-up = OK</strong>, <strong>👎 thumbs-down = Back</strong>, <strong>✌️ two fingers = draw letters</strong> when search is open.</p>
+    </div>
+    <div class="gesture-layout">
+      <div class="card camera-card">
+        <div class="card-head">
+          <h3>Camera & Grid</h3>
+          <div class="cam-controls">
+            <button class="btn small primary" id="camToggle">Enable Camera</button>
+            <label class="toggle small"><input type="checkbox" id="mirrorToggle" checked><span></span> Mirror</label>
+          </div>
+        </div>
+        <div class="video-wrap" id="videoWrap">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <canvas id="zoneOverlay"></canvas>
+          <div class="video-placeholder" id="videoPlaceholder">
+            <div class="ph-icon">📷</div>
+            <p>Camera off</p>
+            <small>Enable to start. Connect your TV first so keys do something.</small>
+          </div>
+          <div class="zone-label tl">◀ LEFT</div>
+          <div class="zone-label tr">RIGHT ▶</div>
+          <div class="zone-label tc">▲ UP</div>
+          <div class="zone-label bc">▼ DOWN</div>
+          <div class="zone-label cc">CENTER — idle</div>
+        </div>
+        <div class="gesture-status">
+          <div class="gs-item"><span class="k">Gesture</span><span class="v" id="gestureLabel">—</span></div>
+          <div class="gs-item"><span class="k">Zone</span><span class="v" id="zoneLabel">—</span></div>
+          <div class="gs-item"><span class="k">Confidence</span><span class="v" id="confLabel">—</span></div>
+          <div class="gs-item"><span class="k">FPS</span><span class="v" id="fpsLabel">—</span></div>
+        </div>
+        <div class="sliders">
+          <label>Hold-to-click <input type="range" id="cooldownRange" min="400" max="3000" value="1200" step="100"><span id="cooldownVal">1.2s</span></label>
+          <label>Center dead-zone <input type="range" id="deadRange" min="20" max="45" value="32" step="1"><span id="deadVal">32%</span></label>
+          <label><input type="checkbox" id="showLandmarks" checked> Show hand skeleton</label>
+          <label><input type="checkbox" id="pauseGestures"> Pause gestures (Space)</label>
+        </div>
+      </div>
+      <div class="card info-card">
+        <h3>How it maps</h3>
+        <ol class="steps">
+          <li><strong>Palm position</strong> → ▲ ▼ ◀ ▶ zones (hold to click).</li>
+          <li><strong>👍 Thumbs-up</strong> → OK. <strong>👎 Thumbs-down</strong> → Back.</li>
+          <li><strong>✌️ Two fingers</strong> → fingertip draws; lift to recognize the letter.</li>
+          <li>Letters type on the TV <strong>only while 🔍 Search is on</strong>.</li>
+        </ol>
+        <div class="dpad-mini" id="dpadMini">
+          <div class="mini-btn" data-zone="UP">▲</div>
+          <div class="mini-row">
+            <div class="mini-btn" data-zone="LEFT">◀</div>
+            <div class="mini-btn center" data-zone="CENTER">·</div>
+            <div class="mini-btn" data-zone="RIGHT">▶</div>
+          </div>
+          <div class="mini-btn" data-zone="DOWN">▼</div>
+        </div>
+        <div class="tip"><strong>Tip:</strong> Hand 40–80cm away, good light, plain background.</div>
+        <div class="keyboard-fallback">
+          <h4>Keyboard fallback</h4>
+          <p>Arrows → same keys. <kbd>Enter</kbd>=OK, <kbd>Backspace</kbd>=Back, <kbd>H</kbd>=Home, <kbd>M</kbd>=Mute.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-grid">
+    <div>Online Remote • Gesture Edition • Phone → TV, same Wi-Fi.</div>
+    <div class="footer-links"><a href="#connect">Connect</a><a href="#remote">Remote</a><a href="#gesture">Gesture</a></div>
+  </div>
+</footer>
+</div>
+
+<div id="page-zones" class="page hidden fullscreen-page">
+  <button class="btn ghost exit-fs-btn" id="exitZonesBtn">Exit ✕</button>
+  <video id="fsVideo" class="fs-camera" autoplay playsinline muted></video>
+  <canvas id="fsOverlay" class="fs-overlay"></canvas>
+  <div class="fs-letter" id="fsDrawLetter"></div>
+  <div class="fs-gesture-hud" id="fsGestureHud">Hold to click • 👍 OK • 👎 Back • ✌️ draw</div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+<script src="app.js"></script>
+</body>
+</html>
