@@ -1,9 +1,16 @@
 {
   "name": "online-remote",
-  "version": "3.0.0",
-  "description": "Gesture TV remote: static site plus one cloud API function.",
+  "version": "3.1.0",
+  "description": "Gesture TV remote: static site, cloud ADB relay, home helper with TV-protocol + ADB.",
   "engines": {
     "node": "22.x"
   },
-  "license": "MIT"
+  "scripts": {
+    "start": "node helper.js",
+    "helper": "node helper.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "androidtv-remote": "^1.0.10"
+  }
 }

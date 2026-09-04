@@ -12,6 +12,7 @@ else
   (cd "$HOME/online-remote" && git pull --ff-only || true)
 fi
 cd "$HOME/online-remote"
+npm install --no-audit --no-fund
 echo ""
 echo "✅ Installed. Starting the remote — open http://localhost:5000 in Chrome."
 echo "   On the TV: enable Developer options → Network/USB debugging, accept once."

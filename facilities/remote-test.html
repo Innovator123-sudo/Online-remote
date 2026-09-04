@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lightweight TV Remote</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+    h1 { margin-bottom: 10px; }
+    .status { padding: 10px; background: rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 20px; }
+    .status.ok { background: #4caf50; color: white; }
+    .status.error { background: #f44336; color: white; }
+    .input-row { display: flex; gap: 10px; margin-bottom: 20px; }
+    .input-row input { flex: 1; padding: 10px; border: 2px solid rgba(255,255,255,0.2); border-radius: 8px; background: rgba(255,255,255,0.1); color: #fff; }
+    .input-row button { padding: 10px 20px; background: #4fc3f7; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+    .remote-pad { display: grid; grid-template-columns: repeat(3, 80px); gap: 10px; margin-bottom: 20px; }
+    .remote-btn { width: 80px; height: 60px; background: rgba(255,255,255,0.15); border: 2px solid rgba(255,255,255,0.2); border-radius: 12px; color: #fff; font-size: 1.2rem; cursor: pointer; }
+    .remote-btn:active { background: #4fc3f7; }
+    .info { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; font-size: 0.9rem; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>⚡ Lightweight TV Remote</h1>
+  <p style="color:#888;margin-bottom:20px;">CRYSTAL Protocol - No ADB</p>
+  <div id="status" class="status">Enter TV IP to connect</div>
+  <div class="input-row">
+    <input type="text" id="tvIp" placeholder="TV IP (e.g., 192.168.1.100)" />
+    <button onclick="connectTv()">Connect</button>
+  </div>
+  <div class="remote-pad">
+    <button class="remote-btn" style="grid-column:2" onclick="sendKey(19)">↑</button>
+    <button class="remote-btn" onclick="sendKey(21)">←</button>
+    <button class="remote-btn" style="background:rgba(79,195,247,0.3)" onclick="sendKey(23)">OK</button>
+    <button class="remote-btn" onclick="sendKey(22)">→</button>
+    <button class="remote-btn" style="grid-column:2" onclick="sendKey(20)">↓</button>
+    <button class="remote-btn" onclick="sendKey(4)">Back</button>
+    <button class="remote-btn" onclick="sendKey(3)">Home</button>
+    <button class="remote-btn" onclick="sendKey(82)">Menu</button>
+  </div>
+  <div class="info">
+    <strong>Setup:</strong><br>
+    1. Enable "Android TV Remote Control" on your TV<br>
+    2. Run: <code>npm run remote</code><br>
+    3. Enter your TV's IP address above
+  </div>
+  <script>
+    const SERVER = 'http://localhost:5001';
+    let currentIp = '';
+    async function connectTv() {
+      const ip = document.getElementById('tvIp').value.trim();
+      if (!ip) return showStatus('Please enter TV IP', 'error');
+      showStatus('Connecting...', 'error');
+      try {
+        const res = await fetch(`${SERVER}/connect?ip=${encodeURIComponent(ip)}`);
+        const data = await res.json();
+        if (data.ok) {
+          currentIp = ip;
+          showStatus(`✅ Connected to ${data.name || 'Android TV'} (${ip})`, 'ok');
+        } else {
+          showStatus(`❌ Connection failed: ${data.error}`, 'error');
+        }
+      } catch (err) {
+        showStatus(`❌ Server not running. Run: npm run remote`, 'error');
+      }
+    }
+    async function sendKey(code) {
+      if (!currentIp) { showStatus('Please connect to TV first', 'error'); return; }
+      try {
+        const res = await fetch(`${SERVER}/key?ip=${encodeURIComponent(currentIp)}&key=${code}`);
+        const data = await res.json();
+        showStatus(data.ok ? `✅ Key sent` : `❌ Failed`, data.ok ? 'ok' : 'error');
+        setTimeout(() => showStatus(`Connected to ${currentIp}`, 'ok'), 1000);
+      } catch (err) {
+        showStatus(`❌ Error`, 'error');
+      }
+    }
+    function showStatus(msg, type) {
+      const s = document.getElementById('status');
+      s.textContent = msg;
+      s.className = `status ${type}`;
+    }
+    document.getElementById('tvIp').addEventListener('keypress', (e) => { if (e.key === 'Enter') connectTv(); });
+  </script>
+</body>
+</html>

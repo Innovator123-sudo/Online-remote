@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚡ Android TV Remote</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      color: #fff;
+    }
+    .title { font-size: 1.8rem; margin-bottom: 10px; }
+    .status { 
+      font-size: 0.9rem; 
+      margin-bottom: 20px; 
+      padding: 8px 16px; 
+      border-radius: 20px;
+      background: rgba(255,255,255,0.1);
+    }
+    .status.connected { background: rgba(76, 175, 80, 0.3); border: 1px solid #4CAF50; }
+    .status.disconnected { background: rgba(244, 67, 54, 0.3); border: 1px solid #F44336; }
+    
+    .tv-selector {
+      width: 100%;
+      max-width: 400px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    .tv-option {
+      padding: 10px 20px;
+      background: rgba(255,255,255,0.1);
+      border: 2px solid transparent;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .tv-option:hover { background: rgba(255,255,255,0.2); }
+    .tv-option.selected { border-color: #4CAF50; background: rgba(76, 175, 80, 0.3); }
+    .tv-option .ip { font-size: 0.85rem; opacity: 0.7; }
+    
+    .discover-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-bottom: 20px;
+      transition: transform 0.2s;
+    }
+    .discover-btn:hover { transform: scale(1.05); }
+    .discover-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    .remote { display: flex; flex-direction: column; align-items: center; gap: 15px; }
+    .d-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 60px);
+      grid-template-rows: repeat(4, 60px);
+      gap: 5px;
+    }
+    .btn {
+      width: 60px;
+      height: 60px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.5rem;
+      cursor: pointer;
+      transition: all 0.1s;
+      background: rgba(255,255,255,0.15);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn:hover { background: rgba(255,255,255,0.25); transform: scale(1.05); }
+    .btn:active { background: rgba(255,255,255,0.4); transform: scale(0.98); }
+    .btn-ok {
+      grid-column: 2;
+      grid-row: 2;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      font-size: 1rem;
+      font-weight: bold;
+    }
+    .btn-medium { font-size: 1rem; background: rgba(255,255,255,0.1); }

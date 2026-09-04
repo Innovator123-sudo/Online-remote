@@ -13,6 +13,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const remote2 = require('./remote2'); // Android TV Remote v2 (real remote protocol)
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 let discovered = [];
@@ -99,9 +100,10 @@ async function adbCmd(ip, cmd, payload){
 // ---------- transport orchestration ----------
 const viaCache = new Map();
 async function validateIp(ip){
-  const [adbOk, dial] = await Promise.all([
+  const [adbOk, dial, rem] = await Promise.all([
     adb(ip, ['shell', 'echo', 'ok'], 6000).catch(()=> false),
     dialGet(ip, '/ssdp/device-desc.xml', 2500),
+    remote2.validateRemote(ip).catch(()=> ({ok:false})),
   ]);
   let name = '';
   if(dial && dial.body){
@@ -109,17 +111,31 @@ async function validateIp(ip){
     if(fn) name = fn.trim().slice(0, 40);
   }
   if(adbOk){ viaCache.set(ip, 'adb'); return {valid:true, via:'adb', name}; }
+  if(rem && rem.ok){ viaCache.set(ip, 'remote'); return {valid:true, via:'remote', name}; }
   if(dial && dial.status === 200){ viaCache.set(ip, 'dial'); return {valid:true, via:'dial', name}; }
   if(dial && dial.body){ viaCache.set(ip, 'dial'); return {valid:true, via:'dial', name}; }
+  if(rem && rem.needPair) return {valid:false, needPair:true};
   return {valid:false};
 }
 async function runCmd(ip, cmd, payload){
   const via = viaCache.get(ip);
-  const order = via ? [via, ...['adb', 'dial'].filter(v=> v !== via)] : ['adb', 'dial'];
+  const order = via ? [via, ...['adb', 'remote', 'dial'].filter(v=> v !== via)] : ['adb', 'remote', 'dial'];
   for(const t of order){
     if(t === 'adb'){
       const ok = await Promise.race([adbCmd(ip, cmd, payload), new Promise(r=> setTimeout(()=> r(false), 12000))]);
       if(ok){ viaCache.set(ip, 'adb'); return {ok:true, via:'adb'}; }
+    } else if(t === 'remote'){
+      try{
+        const send = cmd === 'TEXT'
+          ? remote2.sendRemoteText(ip, payload)
+          : ((cmd in remote2.REMOTE_KEYS) ? remote2.sendRemoteKey(ip, remote2.REMOTE_KEYS[cmd]) : Promise.resolve(false));
+        const ok = await Promise.race([send, new Promise(r=> setTimeout(()=> r(false), 12000))]);
+        if(ok){ viaCache.set(ip, 'remote'); return {ok:true, via:'remote'}; }
+        if(!(cmd in remote2.REMOTE_KEYS) && cmd !== 'TEXT') return {ok:false, via:'remote', error:'unsupported'};
+      }catch(e){
+        if(String((e && e.message) || e) === 'need-pair') return {ok:false, via:'remote', error:'need-pair'};
+        try{ remote2.dropSession(ip); }catch{}
+      }
     } else {
       if(cmd === 'HOME' || cmd === 'BACK' || cmd === 'POWER'){
         const ok = await dialQuit(ip);
@@ -212,6 +228,28 @@ const server = http.createServer((req, res)=>{
         clearTimeout(to);
         if(!res.writableEnded) json(res, {ok:false, error:String((e && e.message) || e)});
       });
+    });
+    return;
+  }
+  // TV-protocol (Remote v2) pairing: TV shows a PIN, user types it.
+  if(p === '/remote-pair' || p === '/remote-code' || p === '/remote-status'){
+    let body = '';
+    req.on('data', c=> body += c);
+    req.on('end', ()=>{
+      try{ body = JSON.parse(body || '{}'); }catch{ body = {}; }
+      const ip = body.ip || parsed.query.ip || '';
+      if(!ip) return json(res, {ok:false, error:'no ip'}, 400);
+      if(p === '/remote-status') return json(res, {ok:true, ...remote2.pairStatus(ip)});
+      if(p === '/remote-pair'){
+        const r = remote2.pairBegin(ip);
+        console.log(`[remote-pair] ${ip} → ${r.ok ? (r.alreadyPaired ? 'already paired' : 'PIN requested') : r.error}`);
+        return json(res, r);
+      }
+      remote2.pairCode(ip, body.code || '').then(r=>{
+        console.log(`[remote-code] ${ip} → ${r.ok ? 'paired' : r.error}`);
+        if(r.ok) viaCache.set(ip, 'remote');
+        json(res, r);
+      }).catch(e=> json(res, {ok:false, error:String((e && e.message) || e)}));
     });
     return;
   }

@@ -391,7 +391,47 @@ $("#pairBtn").onclick = async ()=>{
   const host = (($("#pairHost") || {}).value || "").trim();
   const port = (($("#pairPort") || {}).value || "").trim();
   const code = (($("#pairCode") || {}).value || "").trim();
-  if(!host || !/^\d+$/.test(port) || !/^\d{6}$/.test(code)){ toast("Type host + port + 6-digit code from the TV screen", "bad"); return; }
+  if(!host){ toast("Type the TV host (shown on the TV pairing screen)", "bad"); return; }
+  // Track 1 — home LAN: real TV-protocol pairing. First tap asks the TV to
+  // show its PIN; second tap (with PIN typed) completes pairing. No dev mode.
+  if(isLanIpv4(host) && state.bridge){
+    if(!code){
+      try{
+        const r = await fetchBridge("/remote-pair", {method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({ip:host}), signal:AbortSignal.timeout(8000)});
+        const j = JSON.parse(await r.text());
+        if(j && j.ok && j.alreadyPaired){
+          toast("Already paired — connecting…", "good");
+          addTv({name:"Manual TV", ip:host});
+          const tv = state.tvs.find(x=> x.ip === host);
+          if(tv) pairConnect(tv);
+        }
+        else if(j && j.ok){
+          toast("PIN requested — look at the TV", "good");
+          setScanStatus("PIN showing on TV — type it into the code box, tap Pair again");
+          const pc = $("#pairCode"); if(pc) pc.focus();
+        }
+        else errToastOnce((j && j.error) || "Pair start failed");
+      }catch{ errToastOnce("Helper unreachable"); }
+      return;
+    }
+    try{
+      const r = await fetchBridge("/remote-code", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ip:host, code}), signal:AbortSignal.timeout(20000)});
+      const j = JSON.parse(await r.text());
+      if(j && j.ok){
+        setScanStatus("");
+        toast("Paired ✓ — connecting…", "good");
+        addTv({name:"Manual TV", ip:host});
+        const tv = state.tvs.find(x=> x.ip === host);
+        if(tv) pairConnect(tv);
+      }
+      else errToastOnce((j && j.error) || "Pair failed");
+    }catch{ errToastOnce("Helper unreachable"); }
+    return;
+  }
+  // Track 2 — over the internet: cloud ADB pairing (needs pairing port + code).
+  if(!/^\d+$/.test(port) || !/^\d{6}$/.test(code)){ toast("Type port + 6-digit code from the TV screen", "bad"); return; }
   if(!relayKey){ toast("Paste your relay key first (invite link has it)", "bad"); return; }
   toast("Pairing with TV…");
   try{
@@ -401,7 +441,7 @@ $("#pairBtn").onclick = async ()=>{
       $("#manualIp").value = host; // address filled in for you
       addTv({name:"Manual TV", ip:host});
       const tv = state.tvs.find(x=> x.ip === host);
-      if(tv) initiateConnect(tv);
+      if(tv) pairConnect(tv);
     } else errToastOnce((j && j.error) || "Pair failed");
   }catch{ errToastOnce("Cloud relay unreachable"); }
 };
