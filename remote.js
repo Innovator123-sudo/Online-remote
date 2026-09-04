@@ -123,11 +123,29 @@ function cloudErr(j){
   if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? Approved on the TV?";
   return "Check failed — TV awake, same Wi-Fi, approved?";
 }
+function isPublicPage(){
+  try{
+    const h = location.hostname || "";
+    if(h === "localhost" || h === "127.0.0.1") return false;
+    if(h.startsWith("192.168.") || h.startsWith("10.") || h.startsWith("172.")) return false;
+    return location.protocol === "https:";
+  }catch{ return false; }
+}
 function bridgeCandidates(){
   const list = [];
-  if(location.origin && location.origin.startsWith("http")) list.push(location.origin);
-  if(bridgeBase && !list.includes(bridgeBase)) list.push(bridgeBase);
-  for(const u of ["http://localhost:5000"]){ if(!list.includes(u)) list.push(u); }
+  const origin = (location.origin && location.origin.startsWith("http")) ? location.origin : null;
+  // On a public deploy (Railway/Vercel) the page origin is the CLOUD server —
+  // it can serve the UI but can never reach 192.168.x.x. Prefer a saved LAN
+  // helper first so the D-pad talks to the home network, not the cloud VPC.
+  if(isPublicPage()){
+    if(bridgeBase && !list.includes(bridgeBase)) list.push(bridgeBase);
+    for(const u of ["http://localhost:5000"]){ if(!list.includes(u)) list.push(u); }
+    if(origin && !list.includes(origin)) list.push(origin);
+  } else {
+    if(origin) list.push(origin);
+    if(bridgeBase && !list.includes(bridgeBase)) list.push(bridgeBase);
+    for(const u of ["http://localhost:5000"]){ if(!list.includes(u)) list.push(u); }
+  }
   return list;
 }
 async function probeBridgeBase(base, ms=1000){
@@ -343,8 +361,10 @@ function updateUI(){
   if(kr) kr.style.display = relayKey ? "none" : "";
   const bh = $("#bridgeHint");
   if(bh) bh.innerHTML = state.bridge
-    ? `Helper OK — TV remote signals ready (no Cast, no ADB).`
-    : `Helper not found. Run <code>node helper.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan.`;
+    ? `Helper OK — TV remote signals ready. Scan auto-connects your TV.`
+    : isPublicPage()
+    ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). For same-Wi-Fi auto-scan, run the tiny helper on this phone (Termux) or a home PC, then Scan.`
+    : `Helper not found. Run <code>node helper.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan (auto-connects).`;
   renderTvs();
 }
 
@@ -398,9 +418,36 @@ function flashCmd(cmd){
 $$(".dpad-btn, .qbtn").forEach(b=>{ b.onclick = ()=>{ if(b.dataset.cmd) sendCommand(b.dataset.cmd); }; });
 $("#disconnectBtn").onclick = disconnect;
 $("#scanBtn").onclick = ()=>{
-  if(!state.bridge){ toast("Helper not found — start it first (Termux on phone, or PC)", "bad"); checkBridge(); return; }
+  if(!state.bridge){ cloudRefresh(true); checkBridge(); return; }
   doScan();
 };
+// No-helper path: re-check every known TV through the cloud relay and
+// auto-connect the first one that answers. Silent on boot, chatty on tap.
+async function cloudRefresh(manual){
+  let raw = null, savedName = "Saved TV";
+  try{ raw = localStorage.getItem("savedTvIp"); savedName = localStorage.getItem("savedTvName") || savedName; }catch{}
+  const cands = [];
+  if(raw) cands.push({name:savedName, ip:raw});
+  state.tvs.forEach(t=>{ if(!cands.some(c=> c.ip === t.ip)) cands.push({name:t.name, ip:t.ip}); });
+  if(!cands.length){
+    if(manual) toast("No TV saved yet — type your TV's public address below, tap Connect once. After that it auto-connects.", "bad");
+    return;
+  }
+  if(!relayKey){ if(manual) toast("Paste your relay key below (your invite link has it)", "bad"); return; }
+  if(manual) toast("Checking saved TV through the cloud relay…");
+  for(const c of cands){
+    const t = parseTarget(c.ip);
+    if(!t.host || isLanIpv4(t.host)) continue; // home IPs need the tiny helper, not the cloud
+    addTv({name:c.name, ip:c.ip}, true);
+    const tv = state.tvs.find(x=> x.ip === c.ip);
+    if(tv){
+      const v = await validateTv(tv);
+      if(v.ok){ if(v.via) tv.via = v.via; connectTv(tv); return; }
+    }
+  }
+  if(manual) toast("Cloud relay couldn't reach a saved TV — TV awake? Reachable from the internet? Key correct?", "bad");
+  updateUI();
+}
 $("#addManualBtn").onclick = async ()=>{
   const raw = $("#manualIp").value.trim();
   const t = parseTarget(raw);
@@ -1139,6 +1186,7 @@ if(camToggle) camToggle.onclick = ()=>{ running ? stopCamera() : startCamera(); 
   await detectSubnet();
   paintWord();
   resizeOverlays(); drawZones(); updateUI();
+  autoResume(); // silent auto-connect of the saved TV (cloud relay or helper)
   if(state.bridge) doScan();
   setTimeout(()=>{ if(state.bridge && !state.tvs.length) doScan(); }, 2500);
   window.addEventListener("beforeunload", ()=>{ if(running) stopCamera(); });

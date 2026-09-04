@@ -19,6 +19,16 @@ const ADB_ENV = {...process.env, HOME:ADB_HOME, ANDROID_ADB_SERVER_PORT:'5037'};
 
 const KEYEVENT = {UP:19, DOWN:20, LEFT:21, RIGHT:22, OK:23, BACK:4, HOME:3, MUTE:164, POWER:26};
 
+// Escape for `adb shell input text`: space is %s, every other non-alphanumeric
+// char is backslash-escaped so the on-device shell passes it through literally.
+function adbText(s){
+  return String(s || '').split('').map(ch=>{
+    if(ch === ' ') return '%s';
+    if(/[a-zA-Z0-9]/.test(ch)) return ch;
+    return '\\' + ch;
+  }).join('');
+}
+
 function send(obj, code=200){
   return {statusCode:code, headers:{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}, body:JSON.stringify(obj)};
 }
@@ -93,7 +103,10 @@ module.exports = async function handler(req, res){
     const cmd = String(q.cmd || '').toUpperCase();
     const payload = String(q.payload || '');
     let args = null;
-    if(cmd === 'TEXT') args = ['-s', target, 'shell', 'input', 'text', payload.replace(/ /g, '%s')];
+    if(cmd === 'TEXT'){
+      if(!payload) return deny('bad command');
+      args = ['-s', target, 'shell', 'input', 'text', adbText(payload)];
+    }
     else if(KEYEVENT[cmd]) args = ['-s', target, 'shell', 'input', 'keyevent', String(KEYEVENT[cmd])];
     else return deny('bad command');
     await run(['connect', target], 3000);

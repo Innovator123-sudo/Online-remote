@@ -139,22 +139,30 @@ async function pairCode(ip, code){
 
 // ---------- commands (one persistent session per TV) ----------
 const sessions = new Map(); // ip -> remote (ready)
+function sessionAlive(r){
+  try{
+    const c = r && r.remoteManager && r.remoteManager.client;
+    return !!(c && !c.destroyed && !c.closed && c.writable);
+  }catch{ return false; }
+}
 async function ensureSession(ip, ms=8000){
   if(!lib()) throw new Error('tv-protocol not installed');
   const cur = sessions.get(ip);
-  if(cur) return cur;
+  if(cur){
+    if(sessionAlive(cur)) return cur;
+    dropSession(ip);
+  }
   const cert = loadCert(ip);
   if(!cert) throw new Error('need-pair');
   const remote = newRemote(ip, cert);
   remote.on('error', ()=>{});
-  const started = remote.start().catch(()=> false);
-  const ready = await Promise.race([
-    waitEvent(remote, 'ready', ['unpaired', 'error'], ms),
-    started.then(()=> false),
-  ]);
+  // NOTE: remote.start() resolves at TLS secureConnect, but 'ready' fires
+  // later after the configure handshake. Never race the two — start in the
+  // background and wait for the 'ready' event with a timeout.
+  remote.start().catch(()=>{});
+  const ready = await waitEvent(remote, 'ready', ['unpaired', 'error'], ms);
   if(!ready){
     try{ if(remote.remoteManager && remote.remoteManager.client){ remote.remoteManager.client.removeAllListeners(); remote.remoteManager.client.destroy(); } }catch{}
-    try{ if(typeof remote.stop === 'function' && remote.remoteManager){} }catch{}
     throw new Error('unreachable');
   }
   sessions.set(ip, remote);
