@@ -1,35 +1,12 @@
 {
-  "name": "tv-control-hub",
-  "version": "1.0.0",
-  "description": "Gesture-based TV remote control system using WebRTC and ADB",
+  "name": "cast-remote",
+  "version": "2.0.0",
+  "description": "Phone-to-Chromecast gesture remote. No PC bridge, no dependencies.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "bridge": "node local-bridge.js",
-    "websocket": "node websocket-server.js",
-    "websocket-client": "node client-websocket.js interactive",
-    "test": "echo \"Tests passed\""
-  },
-  "keywords": [
-    "adb",
-    "tv",
-    "remote",
-    "gesture",
-    "webrtc",
-    " MedeiaPipe",
-    "smart-tv"
-  ],
-  "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "ws": "^8.14.0"
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=14.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": ""
   }
 }
