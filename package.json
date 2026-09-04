@@ -1,13 +1,9 @@
 {
   "name": "online-remote",
   "version": "3.0.0",
-  "description": "Gesture TV remote: camera grid arrows, thumbs-up OK, thumbs-down back, air-draw typing.",
-  "main": "helper.js",
-  "scripts": {
-    "start": "node helper.js"
-  },
+  "description": "Gesture TV remote: static site plus one cloud API function.",
   "engines": {
-    "node": ">=14.0.0"
+    "node": "22.x"
   },
   "license": "MIT"
 }
