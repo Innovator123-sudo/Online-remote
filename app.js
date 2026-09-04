@@ -160,14 +160,21 @@ function updateCastUI(){
 }
 
 // ---------- CAST COMMANDS ----------
+function castVolumeRequest(level, muted){
+  // Property-style: works regardless of ctor-arg support. Never swallows errors.
+  const nv = new window.chrome.cast.Volume();
+  if(level !== undefined && level !== null) nv.level = clamp(Math.round(level * 100) / 100, 0, 1);
+  if(muted !== undefined && muted !== null) nv.muted = !!muted;
+  return nv;
+}
 function castStepVolume(delta){
   try{
     const s = castDirect.session;
-    if(!s) return false;
-    const v = s.getVolume() || {level: 0.5, muted: false};
-    const nv = new window.chrome.cast.Volume(
-      clamp(Math.round(((v.level == null ? 0.5 : v.level) + delta) * 100) / 100, 0, 1), false);
-    s.setVolume(nv, ()=>{}, ()=>{});
+    if(!s || typeof s.setVolume !== "function" || typeof s.getVolume !== "function") return false;
+    const v = s.getVolume() || {};
+    const cur = (v.level == null ? 0.5 : v.level);
+    s.setVolume(castVolumeRequest(cur + delta, false),
+      ()=>{}, (e)=> errToastOnce("TV didn't take volume (" + ((e && e.code) || "error") + ")"));
     return true;
   }catch{ return false; }
 }
@@ -203,11 +210,11 @@ async function sendCommand(cmd){
       case "VOL_UP": ok = castStepVolume(0.05); break;
       case "VOL_DOWN": ok = castStepVolume(-0.05); break;
       case "MUTE":
-        if(castDirect.controller){ castDirect.controller.muteOrUnmute(); ok = true; }
+        if(castDirect.controller && castDirect.player){ castDirect.controller.muteOrUnmute(); ok = true; }
         else {
-          const v = castDirect.session.getVolume() || {level: 0.5, muted: false};
-          const nv = new window.chrome.cast.Volume(v.level == null ? 0.5 : v.level, !v.muted);
-          castDirect.session.setVolume(nv, ()=>{}, ()=>{});
+          const v = castDirect.session.getVolume() || {};
+          castDirect.session.setVolume(castVolumeRequest(v.level == null ? 0.5 : v.level, !(v.muted || false)),
+            ()=>{}, (e)=> errToastOnce("TV didn't take mute (" + ((e && e.code) || "error") + ")"));
           ok = true;
         }
         note = "Mute"; break;
@@ -226,34 +233,28 @@ async function sendCommand(cmd){
   else if(cmd !== "SEEK_BACK" && cmd !== "SEEK_FWD") errToastOnce("That key did nothing — is media playing?");
 }
 function disconnect(){
-  // Release the TV back to whatever it was showing — never trap the Cast screen.
+  // UI-only by design: the Cast channel stays warm, so every return visit
+  // rejoins silently — no dialogs, no relaunches, remote just works.
+  state.connected = null;
+  updateCastUI();
+  toast("Remote asleep — tap Connect to wake (silent)");
+}
+function releaseTv(){
+  // The one explicit way back to the TV backdrop. Next connect relaunches (one confirm).
   try{ if(castDirect.session) castDirect.session.endSession(true); }catch{}
   castDirect.session = null;
   state.connected = null;
+  window._castLaunchOk = false;
   updateCastUI();
-  toast("Disconnected — TV released");
+  toast("TV released back to backdrop");
 }
-// Auto-release: tab hidden 60s → give the TV back (no permanent Cast screen).
-let _hideTimer = null;
+// Returning to the tab silently re-adopts a live session — no launch, no dialog.
 document.addEventListener("visibilitychange", ()=>{
-  if(document.hidden){
-    clearTimeout(_hideTimer);
-    _hideTimer = setTimeout(()=>{
-      try{
-        if(castDirect.session){
-          castDirect.session.endSession(true);
-          toast("TV released (tab was hidden)");
-        }
-      }catch{}
-    }, 60000);
-  } else {
-    clearTimeout(_hideTimer);
-    // Silently re-adopt a surviving session — no launch, no dialog.
-    try{
-      const s = window.cast.framework.CastContext.getInstance().getCurrentSession();
-      if(s && !castDirect.session){ castDirect.session = s; onCastSession({sessionState: "SESSION_RESUMED"}); }
-    }catch{}
-  }
+  if(document.hidden) return;
+  try{
+    const s = window.cast.framework.CastContext.getInstance().getCurrentSession();
+    if(s && !castDirect.session){ castDirect.session = s; onCastSession({sessionState: "SESSION_RESUMED"}); }
+  }catch{}
 });
 
 // ---------- BUTTONS + KEYBOARD ----------
@@ -266,6 +267,8 @@ const cardBtn = $("#castConnectBtn");
 if(cardBtn) cardBtn.onclick = castConnectTap;
 const discBtn = $("#disconnectBtn");
 if(discBtn) discBtn.onclick = disconnect;
+const relBtn = $("#releaseTvBtn");
+if(relBtn) relBtn.onclick = releaseTv;
 document.addEventListener("keydown", e=>{
   if(e.code === "Space" && !/INPUT|TEXTAREA/.test((e.target.tagName||""))){
     e.preventDefault();
