@@ -61,7 +61,7 @@
   <div class="container">
     <div class="section-head">
       <h2><span class="num">01</span> Connect your TV</h2>
-      <p id="connectHint">Cloud-first: type your TV's internet address once — keys go phone → cloud → TV. Home-LAN addresses use the helper instead.</p>
+      <p id="connectHint">Tap Scan, tap your TV, then tap Allow on the TV screen. That's the whole pairing — no addresses, no codes.</p>
     </div>
     <div class="card connect-card">
       <div id="connectedPanel" class="connected-empty">
@@ -74,6 +74,7 @@
           <input id="manualIp" type="text" inputmode="url" placeholder="TV address: public IP, name.ddns.net, or 192.168.1.84">
           <button class="btn small" id="addManualBtn">Connect</button>
         </div>
+        <div><small id="scanStatus" style="opacity:.8"></small></div>
         <div class="pair-box">
           <p><strong>Pair with TV code instead</strong> <small>(TV → Wireless debugging → Pair device with pairing code)</small></p>
           <div class="pair-row">

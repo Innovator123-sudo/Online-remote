@@ -17,7 +17,7 @@ Keyboard too: arrows, Enter=OK, Backspace=Back, H=Home, M=Mute, Space=pause.
 **A. Cloud relay (recommended):** the hosted page drives the TV through `/api/tv`.
 1. Make the TV reachable from the internet **once**: router port-forward, e.g. external TCP `15555` → `TV-IP:5555` (or use the TV's global IPv6). No port forward = no cloud path, it's that simple.
 2. On the TV: Developer options → Network/USB debugging ON.
-3. Open the site, paste your relay key once (your invite link carries it). Then either type the TV address and Connect — or skip the address: on the TV open Wireless debugging → Pair device with pairing code, type the shown host + port + 6-digit code into the site's Pair box, and it connects by itself. Accept the on-TV prompt if shown.
+3. Open the site and tap **Scan**, then tap your TV in the list — the TV shows an Allow prompt, tap **Allow** there, done. (No addresses: with the helper on the same Wi-Fi, discovery is automatic. Over the internet, type the address once or use the Pair-with-code box.)
 
 **B. Home helper (same Wi-Fi, no router changes):** `node helper.js` on any home machine (phone via Termux works), open the printed 📱 LAN URL — or the cloud URL with `?bridge=HELPER-IP` once.
 

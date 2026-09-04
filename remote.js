@@ -221,6 +221,31 @@ async function initiateConnect(tv){
   if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name;
   connectTv(tv);
 }
+// Pair-request flow: ping the TV (this pops the Allow prompt on its screen),
+// then wait up to ~a minute for the user to approve there. No typing.
+function setScanStatus(t){ const el = $("#scanStatus"); if(el) el.textContent = t || ""; }
+async function pairConnect(tv){
+  if(state.connected === tv){ toast("Already connected"); return; }
+  setScanStatus(`Pair request sent to ${tv.name} — look at the TV and tap Allow…`);
+  toast("Pair request sent — approve on your TV screen", "good");
+  for(let i = 1; i <= 4; i++){
+    const v = await validateTv(tv);
+    if(v.ok){
+      if(v.via) tv.via = v.via;
+      if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name;
+      setScanStatus("");
+      connectTv(tv);
+      return;
+    }
+    if(i < 4){
+      setScanStatus(`Still waiting for TV approval… (tap Allow on the TV)`);
+      await new Promise(r=> setTimeout(r, 9000));
+    }
+  }
+  setScanStatus("");
+  toast("No approval seen — TV on? Same network? Network debugging enabled?", "bad");
+  updateUI();
+}
 function connectTv(tv){
   state.connected = tv; // stateless from here: every key is its own signal
   try{
@@ -266,7 +291,7 @@ function renderTvs(){
       <div class="tv-item-main"><div class="tv-item-name">${tv.name}</div>
       <div class="tv-item-meta">${tv.ip || ""} • ${tv.model}</div></div>
       <button class="btn small primary">Connect</button>`;
-    el.onclick = ()=> initiateConnect(tv);
+    el.onclick = ()=> pairConnect(tv);
     list.appendChild(el);
   });
 }
@@ -352,7 +377,7 @@ $("#addManualBtn").onclick = async ()=>{
   addTv({name:"Manual TV", ip:raw});
   $("#manualIp").value = "";
   const tv = state.tvs.find(x=> x.ip === raw);
-  if(tv) initiateConnect(tv);
+  if(tv) pairConnect(tv);
 };
 const rkInput = $("#relayKey");
 if(rkInput && !rkInput.value) rkInput.value = relayKey;
@@ -429,17 +454,11 @@ async function doScan(){
   }catch{}
   updateUI();
   if(!state.connected && state.tvs.length){
-    for(const tv of state.tvs){
-      const v = await validateTv(tv);
-      tv._v = v;
-      if(v.ok){ tv.via = v.via; if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name; }
-    }
-    updateUI();
+    // Saved TV first, else the first found — pairConnect pings it (TV shows
+    // the Allow prompt) and waits for approval. Zero typing.
     let pick = null;
-    try{ const s = localStorage.getItem("savedTvIp"); pick = s && state.tvs.find(t=> t.ip === s && t._v && t._v.ok); }catch{}
-    pick = pick || state.tvs.find(t=> t._v && t._v.ok);
-    if(pick) connectTv(pick);
-    else toast("TVs seen but quiet — TV on? Same Wi-Fi? Network debugging?", "bad");
+    try{ const s = localStorage.getItem("savedTvIp"); pick = s && state.tvs.find(t=> t.ip === s); }catch{}
+    pairConnect(pick || state.tvs[0]);
   } else if(!state.tvs.length){
     toast("No TVs answered — TV on? Same Wi-Fi as helper?", "bad");
   }
