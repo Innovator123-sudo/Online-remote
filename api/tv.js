@@ -91,11 +91,11 @@ module.exports = async function handler(req, res){
     if(!r.err && /successfully paired/i.test(r.out)) return res.status(200).json({ok:true, paired:true, host});
     return deny('pair failed (wrong code? code expired? ports reachable?)');
   }
-  if(action === 'validate'){    const c = await run(['connect', target], 3500);
+  if(action === 'validate'){    const c = await run(['connect', target], 2500);
     if(c.err && !/already connected|connected/i.test(c.out)) return deny('unreachable');
-    const t = await run(['-s', target, 'shell', 'echo', 'ok'], 5000);
+    const t = await run(['-s', target, 'shell', 'echo', 'ok'], 3000);
     if(t.err) return deny('no adb answer (dep debugging on? prompt accepted?)');
-    const m = await run(['-s', target, 'shell', 'getprop', 'ro.product.model'], 4000);
+    const m = await run(['-s', target, 'shell', 'getprop', 'ro.product.model'], 2500);
     return res.status(200).json({ok:true, valid:true, model:(m.out || '').slice(0,40) || undefined});
   }
 
@@ -109,8 +109,8 @@ module.exports = async function handler(req, res){
     }
     else if(KEYEVENT[cmd]) args = ['-s', target, 'shell', 'input', 'keyevent', String(KEYEVENT[cmd])];
     else return deny('bad command');
-    await run(['connect', target], 3000);
-    const r = await run(args, 5000);
+    await run(['connect', target], 2500);
+    const r = await run(args, 4000);
     if(r.err) return deny('send failed (TV asleep? prompt accepted?)');
     return res.status(200).json({ok:true, sent:true});
   }
