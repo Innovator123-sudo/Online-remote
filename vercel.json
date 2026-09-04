@@ -1,8 +1,13 @@
 {
-  "functions": {
-    "api/tv.js": {
-      "includeFiles": "api/bin/**",
-      "maxDuration": 10
+  "services": {
+    "web": {
+      "root": ".",
+      "functions": {
+        "api/tv.js": {
+          "includeFiles": "api/bin/**",
+          "maxDuration": 10
+        }
+      }
     }
   }
 }
