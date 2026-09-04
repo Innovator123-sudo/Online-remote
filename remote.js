@@ -1,7 +1,7 @@
-/* Online Remote — gesture TV remote. NO Cast, NO cloud control.
-   Your phone (or any home device) running `node server.js` sends real remote
-   signals (ADB keyevents) that the TV processes exactly like a physical
-   remote: stateless, nothing opens on screen, Home never "disconnects".
+/* Online Remote — gesture TV remote. NO Cast.
+   Cloud-first: the hosted page drives the TV through the /api/tv cloud relay
+   (phone → cloud → TV). Home-LAN addresses use the helper instead.
+   Every key is a stateless signal, like a physical remote.
    Gestures: palm position = arrows, thumbs-up/fist = OK, thumbs-down = back,
    two fingers = draw letters (type when Search is on). */
 
