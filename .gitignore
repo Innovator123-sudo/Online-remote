@@ -7,3 +7,6 @@ Thumbs.db
 .vscode/
 .idea/
 scan-results.json
+
+.vercel
+.env*
