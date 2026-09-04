@@ -9,7 +9,7 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-start "Online Remote" cmd /k "node server.js"
+start "Online Remote" cmd /k "node helper.js"
 timeout /t 3 /nobreak >nul
 start http://localhost:5000
 echo.

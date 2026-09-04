@@ -16,4 +16,4 @@ echo ""
 echo "✅ Installed. Starting the remote — open http://localhost:5000 in Chrome."
 echo "   On the TV: enable Developer options → Network/USB debugging, accept once."
 echo ""
-node server.js
+node helper.js

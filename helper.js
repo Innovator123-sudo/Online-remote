@@ -4,7 +4,7 @@
  * Run it on ANY home-Wi-Fi machine for FULL control of Android TVs
  * (arrows + OK + typing over ADB) plus real network discovery:
  *
- *   node server.js   →   http://localhost:5000  (+ 📱 LAN URL printed)
+ *   node helper.js   →   http://localhost:5000  (+ 📱 LAN URL printed)
  *
  * Phones on the same Wi-Fi open EITHER the cloud URL (auto-finds this
  * helper if the IP was saved once) or the printed LAN URL (zero setup).
