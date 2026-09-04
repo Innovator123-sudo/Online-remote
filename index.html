@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Online Remote — Gesture TV Remote</title>
 <meta name="description" content="Control your TV from your phone browser. Camera grid arrows, thumbs-up OK, thumbs-down back, air-draw typing when search is open.">
+<meta name="theme-color" content="#04070B">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -15,6 +19,17 @@
 </head>
 <body>
 <div id="ambient-bg"></div>
+
+<div id="bootSplash" role="status" aria-label="Loading Online Remote">
+  <div class="boot-inner">
+    <div class="boot-rings"><span></span><span></span><span></span><div class="boot-emoji">📺</div></div>
+    <div class="boot-name">Online Remote</div>
+    <div class="boot-tag">Your hand is the remote</div>
+    <div class="boot-bar"><div class="boot-fill" id="bootFill"></div></div>
+    <div class="boot-step" id="bootStep">Waking up…</div>
+    <div class="boot-tip" id="bootTip">Tip: keep your TV on and on the same Wi-Fi.</div>
+  </div>
+</div>
 
 <div id="page-home" class="page active">
 <nav class="navbar">

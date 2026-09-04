@@ -241,7 +241,7 @@ async function runCmd(ip, cmd, payload){
 }
 
 // ---------- server ----------
-const MIME = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon'};
+const MIME = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon'};
 const server = http.createServer((req, res)=>{
   pna(res, req);
   if(req.method === 'OPTIONS'){ res.writeHead(204); return res.end(); }

@@ -186,6 +186,48 @@ kbd{background:var(--card-2);border:1px solid var(--border);border-radius:6px;pa
 .toast.warn{border-color:rgba(245,158,11,.5)}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .btn:disabled{opacity:.6;cursor:wait}
+/* ---------- boot splash (buys time while we preload) ---------- */
+#bootSplash{position:fixed;inset:0;z-index:300;display:grid;place-content:center;background:radial-gradient(circle at 50% 35%,rgba(0,240,255,.12),transparent 60%),radial-gradient(circle at 50% 75%,rgba(188,19,254,.12),transparent 60%),var(--bg);transition:opacity .45s ease;padding:24px}
+#bootSplash.done{opacity:0;pointer-events:none}
+.boot-inner{display:grid;justify-items:center;text-align:center;gap:10px;max-width:min(420px,92vw)}
+.boot-rings{position:relative;width:120px;height:120px;display:grid;place-content:center;margin-bottom:6px}
+.boot-rings span{position:absolute;inset:0;border-radius:50%;border:2px solid transparent;border-top-color:var(--accent);animation:spin 1.6s linear infinite}
+.boot-rings span:nth-child(2){inset:12px;border-top-color:var(--accent2);animation-duration:2.3s;animation-direction:reverse;opacity:.8}
+.boot-rings span:nth-child(3){inset:24px;border-top-color:var(--muted);animation-duration:3.1s;opacity:.5}
+@keyframes spin{to{transform:rotate(360deg)}}
+.boot-emoji{font-size:44px;animation:bob 2.2s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-6px)}}
+.boot-name{font-size:1.6em;font-weight:800;letter-spacing:.5px}
+.boot-tag{color:var(--muted);font-size:.9em;margin-top:-6px}
+.boot-bar{width:min(300px,70vw);height:8px;border-radius:999px;background:var(--card-2);border:1px solid var(--border);overflow:hidden;margin-top:10px}
+.boot-fill{height:100%;width:5%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s ease}
+.boot-step{font-size:.85em;font-weight:700;color:var(--text);min-height:1.4em}
+.boot-tip{font-size:.78em;color:var(--muted);min-height:2.6em;max-width:34ch}
+/* ---------- small phones ---------- */
+@media(max-width:560px){
+  .container{padding:0 12px}
+  .hero{padding:30px 0 6px}
+  .connected-empty{padding:20px 12px}
+  .manual-row{max-width:none}
+  .code-row{flex-wrap:wrap}
+  .code-row input{flex:1 1 100%}
+  .code-row .btn{flex:1}
+  .pair-box,.key-box,.helper-box{margin-left:0;margin-right:0}
+  .quick-grid{grid-template-columns:repeat(2,1fr)}
+  .dpad{grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,58px)}
+  .remote-card{padding:12px}
+  .gesture-status{padding:10px 12px}
+  .sliders{padding:0 12px 12px}
+  .toast-stack{width:min(420px,94vw)}
+}
+@media(max-width:400px){
+  .brand-text{display:none}
+  .nav-inner{gap:8px}
+  .conn-pill{font-size:.72em;padding:5px 10px}
+  .cta-row .btn{flex:1;text-align:center}
+  .dpad{grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,54px);gap:6px}
+  .boot-name{font-size:1.35em}
+}
 @media(max-width:860px){
   .hero-grid,.gesture-layout{grid-template-columns:1fr}
   .nav-links{display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);flex-direction:column;padding:12px 16px;border-bottom:1px solid var(--border)}

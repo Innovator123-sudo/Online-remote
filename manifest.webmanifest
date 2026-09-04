@@ -1,0 +1,14 @@
+{
+  "name": "Online Remote — Gesture TV Remote",
+  "short_name": "Remote",
+  "description": "Your hand is the remote. Point, thumbs-up for OK, draw letters to type.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#04070B",
+  "theme_color": "#04070B",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

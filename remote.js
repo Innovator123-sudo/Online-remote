@@ -1344,14 +1344,73 @@ async function stopCamera(){
 }
 if(camToggle) camToggle.onclick = ()=>{ running ? stopCamera() : startCamera(); };
 
-// ---------- BOOT ----------
+// ---------- BOOT (splash buys time while we preload everything) ----------
+function bootProgress(pct, step){
+  const f = $("#bootFill"), s = $("#bootStep");
+  if(f) f.style.width = Math.max(5, Math.min(100, pct)) + "%";
+  if(s && step) s.textContent = step;
+}
+const BOOT_TIPS = [
+  "Tip: keep your TV on and on the same Wi-Fi.",
+  "Tip: 👍 thumbs-up = OK, 👎 thumbs-down = Back.",
+  "Tip: hold your palm steady in a grid zone to click.",
+  "Tip: ✌️ two fingers draws letters when search is open.",
+  "Tip: one PIN approval on the TV, then it remembers.",
+];
+let _tipTimer = null;
+function bootTips(){
+  let i = 0;
+  const el = $("#bootTip");
+  clearInterval(_tipTimer);
+  _tipTimer = setInterval(()=>{
+    i = (i + 1) % BOOT_TIPS.length;
+    if(el) el.textContent = BOOT_TIPS[i];
+  }, 2100);
+}
+function hideSplash(){
+  clearInterval(_tipTimer);
+  bootProgress(100, "Ready ✓");
+  setTimeout(()=>{
+    const sp = $("#bootSplash");
+    if(sp){ sp.classList.add("done"); setTimeout(()=> sp.remove(), 500); }
+  }, 250);
+}
 (async function boot(){
-  await detectSubnet();
-  paintWord();
-  resizeOverlays(); drawZones(); updateUI();
-  autoResume(); // silent auto-connect of the saved TV (cloud relay or helper)
-  if(state.bridge) doScan();
-  setTimeout(()=>{ if(state.bridge && !state.tvs.length) doScan(); }, 2500);
+  const t0 = now();
+  const splash = $("#bootSplash");
+  if(splash) splash.addEventListener("click", hideSplash, {once:true});
+  bootTips();
+  try{
+    // 1) Offline cache (service worker) — site shell cached automatically.
+    bootProgress(12, "Preparing offline cache…");
+    try{
+      if("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost","127.0.0.1"].includes(location.hostname))){
+        navigator.serviceWorker.register("sw.js").catch(()=>{});
+      }
+    }catch{}
+    // 2) Network fingerprint for same-Wi-Fi matching.
+    bootProgress(28, "Checking your Wi-Fi…");
+    await detectSubnet();
+    // 3) Hand-tracking engine preload (no camera yet — just the model code).
+    bootProgress(46, "Loading gesture engine…");
+    try{ if(typeof Hands !== "undefined") await initHands(); }catch{}
+    // 4) Warm the cloud relay (shakes off serverless cold start).
+    bootProgress(64, "Warming the relay…");
+    try{ await fetch("/api/tv?action=status", {signal:AbortSignal.timeout(6000)}).catch(()=>null); }catch{}
+    // 5) Paint UI + silently reconnect anything saved.
+    bootProgress(80, "Finding your TV…");
+    paintWord();
+    resizeOverlays(); drawZones(); updateUI();
+    try{ await Promise.race([autoResume(), new Promise(r=> setTimeout(r, 6000))]); }catch{}
+    if(state.bridge) doScan();
+    setTimeout(()=>{ if(state.bridge && !state.tvs.length) doScan(); }, 2500);
+    bootProgress(94, state.connected ? `Connected to ${state.connected.name} ✓` : "Ready — tap Scan to connect");
+  }catch{}
+  // Feel instant but never flash: min 1.4s, hard cap handled by stages above.
+  const wait = Math.max(0, 1400 - (now() - t0));
+  setTimeout(hideSplash, wait);
+  // Failsafe: never trap the user behind the splash.
+  setTimeout(()=>{ const sp = $("#bootSplash"); if(sp){ sp.classList.add("done"); setTimeout(()=> sp.remove(), 500); } }, 8000);
   window.addEventListener("beforeunload", ()=>{ if(running) stopCamera(); });
   window.TVRemote = {sendCommand, recognizeLetter};
 })();
