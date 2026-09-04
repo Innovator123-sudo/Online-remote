@@ -61,18 +61,22 @@
   <div class="container">
     <div class="section-head">
       <h2><span class="num">01</span> Connect your TV</h2>
-      <p id="connectHint">One tap, same Wi-Fi. Keys go straight to the TV like a real remote — nothing opens on screen.</p>
+      <p id="connectHint">Cloud-first: type your TV's internet address once — keys go phone → cloud → TV. Home-LAN addresses use the helper instead.</p>
     </div>
     <div class="card connect-card">
       <div id="connectedPanel" class="connected-empty">
         <div class="big-icon">📺</div>
         <p>Not connected</p>
-        <small>Turn the TV on, join the same Wi-Fi, then scan. First time on Android TV: accept the debugging prompt on the TV.</small><br>
+        <small>Type your TV's internet address above and hit Connect. First time on the TV: accept the debugging prompt on screen.</small><br>
         <button class="btn primary" id="scanBtn">🔍 Scan for my TV</button>
         <div><small id="bridgeHint" style="opacity:.7"></small></div>
         <div class="manual-row">
-          <input id="manualIp" type="text" inputmode="numeric" placeholder="TV IP e.g. 192.168.1.84">
-          <button class="btn small" id="addManualBtn">Add</button>
+          <input id="manualIp" type="text" inputmode="url" placeholder="TV address: public IP, name.ddns.net, or 192.168.1.84">
+          <button class="btn small" id="addManualBtn">Connect</button>
+        </div>
+        <div class="manual-row" id="keyRow">
+          <input id="relayKey" type="password" placeholder="Relay key (in your invite link — once)">
+          <button class="btn small" id="saveKeyBtn">Save</button>
         </div>
       </div>
       <div id="remotePanel" class="remote-panel hidden">

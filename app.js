@@ -86,6 +86,41 @@ try{
     if(/^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)){ bridgeBase = v; try{ localStorage.setItem("bridgeBase", v); }catch{} }
   }
 }catch{}
+// Cloud relay key (one paste ever — invite links carry ?key= and save it).
+let relayKey = "";
+try{
+  relayKey = localStorage.getItem("relayKey") || "";
+  const qk = (new URLSearchParams(location.search).get("key") || "").trim();
+  if(qk){ relayKey = qk; try{ localStorage.setItem("relayKey", relayKey); }catch{} }
+}catch{}
+// A "target" is host[:port] — public IP/hostname/IPv6 goes via cloud relay,
+// home-LAN IPv4 goes via the LAN helper. Same box, auto-routed.
+function parseTarget(input){
+  const s = (input || "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const m = /:(\d+)$/.exec(s);
+  if(m) return {host:s.slice(0, s.length - m[0].length), port:Math.max(1, Math.min(65535, parseInt(m[1], 10) || 5555))};
+  return {host:s, port:5555};
+}
+function isLanIpv4(h){
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h || "");
+  if(!m) return false;
+  const a = +m[1], b = +m[2];
+  if([a, +m[3], +m[4]].some(n=> n < 0 || n > 255) || b < 0 || b > 255) return false;
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
+}
+async function cloudApi(params, ms=10000){
+  const r = await fetch(`/api/tv?key=${encodeURIComponent(relayKey)}&${params}`, {signal:AbortSignal.timeout(ms)});
+  return JSON.parse(await r.text());
+}
+function cloudErr(j){
+  const e = (j && j.error) || "";
+  if(e === "bad key") return "Relay key missing — open your invite link once";
+  if(e === "unreachable") return "TV not reachable from the internet — port-forward/IPv6 on? TV awake?";
+  if(e === "not a public address (home IPs use the LAN helper)") return "That's a home IP — run the LAN helper for it";
+  if(e && e.indexOf("no adb") === 0) return "TV silent — Network debugging on? Prompt accepted on the TV?";
+  if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? Prompt accepted?";
+  return "Cloud check failed — TV awake and reachable?";
+}
 function bridgeCandidates(){
   const list = [];
   if(location.origin && location.origin.startsWith("http")) list.push(location.origin);
@@ -153,17 +188,29 @@ function addTv({name, ip, model}, quiet){
   state.tvs.push({id:uid(), name:name || "TV", ip:ip || "", model:(model || "TV").slice(0,32), via:"helper"});
   if(!quiet) updateUI();
 }
-// Validation = "is this TV real, on my network, answering?" Only then connect.
+// Validation = "is this TV real and answering?" Only then connect.
+// Home-LAN IPv4 → LAN helper. Anything public → cloud relay. Auto-routed.
 async function validateTv(tv){
-  if(!isValidIpv4(tv.ip)) return {ok:false, reason:"Bad IP address"};
-  if(!sameSubnet(tv.ip)) return {ok:false, reason:`${tv.ip} is not on your Wi-Fi (${state.subnet}.0/24)`};
-  if(!state.bridge) return {ok:false, reason:"Helper not running — start it, then Scan"};
+  const t = parseTarget(tv.ip);
+  if(!t.host) return {ok:false, reason:"Type your TV's address"};
+  if(isLanIpv4(t.host)){
+    tv._t = t;
+    if(!sameSubnet(t.host)) return {ok:false, reason:`${t.host} is a different home network (${state.subnet}.0/24 here)`};
+    if(!state.bridge) return {ok:false, reason:"Helper not running — start it, then Scan"};
+    try{
+      const r = await fetchBridge(`/validate?ip=${encodeURIComponent(t.host)}`, {signal:AbortSignal.timeout(12000)});
+      const j = JSON.parse(await r.text());
+      if(j && j.valid) return {ok:true, via:"helper-" + (j.via || "adb"), name:j.name || ""};
+      return {ok:false, reason:`${t.host} is quiet — TV on? Same Wi-Fi? Network debugging enabled on the TV?`};
+    }catch{ return {ok:false, reason:"Helper unreachable"}; }
+  }
+  tv._t = t;
+  if(!relayKey) return {ok:false, reason:"Paste your relay key below (your invite link has it)"};
   try{
-    const r = await fetchBridge(`/validate?ip=${encodeURIComponent(tv.ip)}`, {signal:AbortSignal.timeout(12000)});
-    const j = JSON.parse(await r.text());
-    if(j && j.valid) return {ok:true, via:"helper-" + (j.via || "adb"), name:j.name || ""};
-    return {ok:false, reason:`${tv.ip} is quiet — TV on? Same Wi-Fi? Network debugging enabled on the TV?`};
-  }catch{ return {ok:false, reason:"Helper unreachable"}; }
+    const j = await cloudApi(`action=validate&host=${encodeURIComponent(t.host)}&port=${t.port}`, 14000);
+    if(j && j.valid) return {ok:true, via:"cloud", name:j.model || ""};
+    return {ok:false, reason:cloudErr(j)};
+  }catch{ return {ok:false, reason:"Cloud relay unreachable"}; }
 }
 async function initiateConnect(tv){
   if(state.connected === tv){ toast("Already connected"); return; }
@@ -191,13 +238,16 @@ function disconnect(){
 }
 async function autoResume(){
   if(state.connected || state.scanning) return;
-  let ip = null;
-  try{ ip = localStorage.getItem("savedTvIp"); }catch{}
-  if(!ip || !isValidIpv4(ip) || !sameSubnet(ip)) return;
+  let raw = null, savedName = "Saved TV";
+  try{ raw = localStorage.getItem("savedTvIp"); savedName = localStorage.getItem("savedTvName") || savedName; }catch{}
+  if(!raw) return;
+  const t = parseTarget(raw);
+  if(!t.host) return;
   for(let i = 0; i < 20 && !state.subnet; i++) await new Promise(r=> setTimeout(r, 100));
-  if(!sameSubnet(ip)) return;
-  addTv({name:"Saved TV", ip}, true);
-  const tv = state.tvs.find(t=> t.ip === ip);
+  if(isLanIpv4(t.host) && !sameSubnet(t.host)) return; // different home network — keep saved for later
+  if(isLanIpv4(t.host) && !state.bridge) return; // helper not up yet; checkBridge will retry us
+  addTv({name:savedName, ip:raw}, true);
+  const tv = state.tvs.find(x=> x.ip === raw);
   if(tv){
     const v = await validateTv(tv);
     if(v.ok){ if(v.via) tv.via = v.via; connectTv(tv); }
@@ -229,11 +279,16 @@ function updateUI(){
   if(c){
     $("#tvName").textContent = state.connected.name;
     $("#tvAvatar").textContent = (state.connected.name[0] || "T").toUpperCase();
-    $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.via === "helper-adb" ? "Full control — arrows + typing" : "Basic — Home/Back quit app"}`;
+    const viaTxt = state.connected.via === "cloud" ? "Cloud relay — no helper"
+      : state.connected.via === "helper-adb" ? "Full control — arrows + typing"
+      : "Basic — Home/Back quit app";
+    $("#tvMeta").textContent = `${state.connected.ip} • ${viaTxt}`;
     $("#heroTvName").textContent = state.connected.name;
   } else {
     $("#heroTvName").textContent = "No TV yet";
   }
+  const kr = $("#keyRow");
+  if(kr) kr.style.display = relayKey ? "none" : "";
   const bh = $("#bridgeHint");
   if(bh) bh.innerHTML = state.bridge
     ? `Helper OK — full remote signals ready.`
@@ -251,10 +306,22 @@ async function sendCommand(cmd, payload=""){
     toast(`Search off: “${payload}” buffered — turn 🔍 Search on to type`, "bad");
     return;
   }
+  const t = tv._t || parseTarget(tv.ip);
+  // --- cloud relay: phone → Vercel → TV. No helper involved at all. ---
+  if(tv.via === "cloud"){
+    if(!relayKey){ errToastOnce("Relay key missing — open your invite link once"); return; }
+    try{
+      const j = await cloudApi(`action=cmd&host=${encodeURIComponent(t.host)}&port=${t.port}&cmd=${encodeURIComponent(cmd)}&payload=${encodeURIComponent(payload)}`, 12000);
+      if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
+      else errToastOnce(cloudErr(j));
+    }catch{ errToastOnce("Cloud relay unreachable"); }
+    return;
+  }
+  // --- LAN helper ---
   if(!state.bridge || !bridgeBase){ errToastOnce("Helper not running"); return; }
   try{
     const r = await fetch(`${bridgeBase}/cmd`, {method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ip:tv.ip, cmd, payload}), signal:AbortSignal.timeout(10000)});
+      body:JSON.stringify({ip:t.host, cmd, payload}), signal:AbortSignal.timeout(10000)});
     const j = JSON.parse(await r.text());
     if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
     else errToastOnce(j && j.error === "diallimited" ? "Basic TV — Home/Back quit the app" : "TV ignored the key — on? Same Wi-Fi?");
@@ -279,12 +346,21 @@ $("#scanBtn").onclick = ()=>{
   doScan();
 };
 $("#addManualBtn").onclick = async ()=>{
-  const ip = $("#manualIp").value.trim();
-  if(!isValidIpv4(ip)){ toast("Type a valid IP like 192.168.1.84", "bad"); return; }
-  addTv({name:"Manual TV", ip});
+  const raw = $("#manualIp").value.trim();
+  const t = parseTarget(raw);
+  if(!t.host || !/[.:]/.test(t.host) || /\s/.test(t.host)){ toast("Type a TV address — public IP, name.ddns.net, or 192.168.1.84", "bad"); return; }
+  addTv({name:"Manual TV", ip:raw});
   $("#manualIp").value = "";
-  const tv = state.tvs.find(t=> t.ip === ip);
+  const tv = state.tvs.find(x=> x.ip === raw);
   if(tv) initiateConnect(tv);
+};
+const rkInput = $("#relayKey");
+if(rkInput && !rkInput.value) rkInput.value = relayKey;
+$("#saveKeyBtn").onclick = ()=>{
+  relayKey = (($("#relayKey") || {}).value || "").trim();
+  try{ localStorage.setItem("relayKey", relayKey); }catch{}
+  toast(relayKey ? "Key saved — connect your TV" : "Key cleared", relayKey ? "good" : "");
+  updateUI();
 };
 $("#searchToggle").onchange = e=>{
   state.searchActive = e.target.checked;
