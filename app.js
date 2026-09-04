@@ -512,8 +512,12 @@ async function doScan(){
     }catch(e){ console.log("Bridge scan (parallel) skipped:", e.message); }
   })();
 
-  // Also try to load scan-results.json from `node scan.js` if website is on same machine (instant)
-  fetch("scan-results.json", {cache:"no-store"}).then(r=> r.ok?r.json():null).then(j=>{
+  // Also try to load scan-results.json from `node scan.js` if website is on same machine (instant).
+  // Tolerant parser: an empty/truncated cache file must never break the list.
+  fetch("scan-results.json", {cache:"no-store"}).then(async r=>{
+    if(!r.ok) return null;
+    try{ const t = await r.text(); return t && t.trim() ? JSON.parse(t) : null; }catch{ return null; }
+  }).then(j=>{
     if(j && j.devices && j.devices.length && state.scanning){
       let added=0;
       j.devices.forEach(d=>{
