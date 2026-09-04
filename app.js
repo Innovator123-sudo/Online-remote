@@ -98,7 +98,6 @@ function castConnectTap(){
     toast("Direct Cast needs Chrome on Android + same Wi-Fi as the TV", "bad");
   }
 }
-}
 function sessionName(s){
   try{ const d = s.getCastDevice && s.getCastDevice(); if(d && d.friendlyName) return String(d.friendlyName).slice(0,40); }catch{}
   return "Chromecast";
