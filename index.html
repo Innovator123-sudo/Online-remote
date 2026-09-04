@@ -8,11 +8,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script>
-window._gcastOk = false;
-window.__onGCastApiAvailable = function(ok){ window._gcastOk = !!ok; };
-</script>
-<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -66,14 +61,15 @@ window.__onGCastApiAvailable = function(ok){ window._gcastOk = !!ok; };
   <div class="container">
     <div class="section-head">
       <h2><span class="num">01</span> Connect your TV</h2>
-      <p id="connectHint">One tap, same Wi-Fi. The remote finds the best way to talk to your TV by itself.</p>
+      <p id="connectHint">One tap, same Wi-Fi. Keys go straight to the TV like a real remote — nothing opens on screen.</p>
     </div>
     <div class="card connect-card">
       <div id="connectedPanel" class="connected-empty">
         <div class="big-icon">📺</div>
         <p>Not connected</p>
-        <small>Chromecast: tap below and pick it. Android TV with the helper running: it appears by itself.</small><br>
-        <button class="btn primary" id="castBtn">📺 Connect my TV</button>
+        <small>Turn the TV on, join the same Wi-Fi, then scan. First time on Android TV: accept the debugging prompt on the TV.</small><br>
+        <button class="btn primary" id="scanBtn">🔍 Scan for my TV</button>
+        <div><small id="bridgeHint" style="opacity:.7"></small></div>
         <div class="manual-row">
           <input id="manualIp" type="text" inputmode="numeric" placeholder="TV IP e.g. 192.168.1.84">
           <button class="btn small" id="addManualBtn">Add</button>

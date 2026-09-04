@@ -1,36 +1,41 @@
 # Online Remote — Gesture TV Remote
 
-Control your TV from your phone browser. Same Wi-Fi, nothing to install.
+Phone → TV remote signals, exactly like a physical remote. No Cast, no apps opening on screen, Home never disconnects. Same Wi-Fi.
 
 ## Gestures (camera grid)
 
 | Do this | Sends |
 |---|---|
 | Palm in ▲ ▼ ◀ ▶ zone (hold ~1.2s) | Arrow key |
-| 👍 Thumbs-up (hold) | OK |
+| 👍 Thumbs-up or ✊ fist (hold) | OK |
 | 👎 Thumbs-down (hold) | Back |
 | ✌️ Two fingers, draw a letter | Types it — only while 🔍 Search is on |
 | CENTER zone | Idle rest space |
 
-Keyboard works too: arrows, Enter=OK, Backspace=Back, H=Home, M=Mute, Space=pause.
+Keyboard too: arrows, Enter=OK, Backspace=Back, H=Home, M=Mute, Space=pause.
 
-## Connect
+## Run it (pick one — phone needs no laptop)
 
-- **Chromecast:** tap 📺 Connect my TV and pick it. No PC needed. (Media keys: volume, ±30s, play/pause, home.)
-- **Android TV, full control (arrows + typing):** run the tiny helper on any home-Wi-Fi machine, then open the printed LAN URL on your phone — or open this hosted page once with `?bridge=PC-IP`:
-  ```bash
-  node server.js
-  # → http://localhost:5000  (+ 📱 LAN URL for phones)
-  ```
-  On the TV: enable Developer options → Network/USB debugging, accept the prompt once.
+**A. Entirely on your phone (recommended):** install Termux, paste:
+```sh
+pkg install -y nodejs git android-tools && git clone https://github.com/Innovator123-sudo/Online-remote.git && cd Online-remote && node server.js
+```
+Then open **http://localhost:5000** in Chrome. Done.
+
+**B. From any home PC:** `node server.js`, open the printed 📱 LAN URL on your phone (same Wi-Fi).
+
+**C. Cloud page:** open the hosted URL with `?bridge=PHONE-OR-PC-IP` once (it remembers).
+
+On the TV (once): enable Developer options → Network/USB debugging, accept the prompt.
 
 ## Files
 
 ```
-index.html  — UI (connect, remote, gesture grid, fullscreen zones)
-style.css   — mobile-first theme
-app.js      — Cast SDK + bridge client + MediaPipe gestures + letter recognizer (zero deps)
-server.js   — optional home helper: static host + SSDP discovery + ADB commands (zero deps)
+index.html       — UI (connect, remote, gesture grid, fullscreen zones)
+style.css        — mobile-first theme
+app.js           — gestures + draw recognizer + remote client (zero deps)
+server.js        — home helper: static host + discovery + ADB signals (zero deps)
+termux-setup.sh  — one-shot phone installer
 ```
 
 Deploys anywhere static: Vercel, Netlify, GitHub Pages.

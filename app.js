@@ -1,6 +1,7 @@
-/* Online Remote — gesture TV remote.
-   Transports (auto): LAN bridge `node server.js` (full Android-TV control incl.
-   typing) and direct Cast SDK (Chromecast media keys, no PC).
+/* Online Remote — gesture TV remote. NO Cast, NO cloud control.
+   Your phone (or any home device) running `node server.js` sends real remote
+   signals (ADB keyevents) that the TV processes exactly like a physical
+   remote: stateless, nothing opens on screen, Home never "disconnects".
    Gestures: palm position = arrows, thumbs-up/fist = OK, thumbs-down = back,
    two fingers = draw letters (type when Search is on). */
 
@@ -29,7 +30,7 @@ function errToastOnce(msg){
 
 // ---------- STATE ----------
 const state = {
-  tvs: [], connected: null, scanning: false, scanTimer: null,
+  tvs: [], connected: null, scanning: false,
   subnet: null, bridge: false, searchActive: false,
   pause: false, deadPct: 32, DWELL_MS: 1200,
   _dwellKey: null, _dwellStart: 0, _dwellFired: false,
@@ -38,7 +39,6 @@ const state = {
   drawing: false, drawPoints: [], lastDrawEnd: 0, _drawTimer: null,
   word: "",
 };
-const castDirect = {available:false, inited:false, session:null, player:null, controller:null};
 function uid(){ return Math.random().toString(36).slice(2,8).toUpperCase(); }
 
 // ---------- THEME + NAV ----------
@@ -74,7 +74,9 @@ async function detectSubnet(){
   if(!state.subnet) state.subnet = "192.168.1";
 }
 
-// ---------- BRIDGE CLIENT (quiet, cached, no log spam) ----------
+// ---------- HELPER CLIENT (quiet, cached, no log spam) ----------
+// The helper is just `node server.js` on your network — Termux on this very
+// phone works: the page then talks to http://localhost:5000 same-origin.
 let bridgeBase = null;
 try{ bridgeBase = localStorage.getItem("bridgeBase") || null; }catch{}
 try{
@@ -113,7 +115,7 @@ async function fetchBridge(path, opts={}){
       }
     }catch(e){ lastErr = e; }
   }
-  throw lastErr || new Error("no bridge");
+  throw lastErr || new Error("no helper");
 }
 let _bridgeToastShown = false, _wasBridge = false;
 async function checkBridge(){
@@ -123,11 +125,11 @@ async function checkBridge(){
       bridgeBase = base;
       try{ localStorage.setItem("bridgeBase", base); }catch{}
       state.bridge = true;
-      if(!_bridgeToastShown){ _bridgeToastShown = true; toast("Helper found — full TV control", "good"); }
+      if(!_bridgeToastShown){ _bridgeToastShown = true; toast("Helper found — full remote ready", "good"); }
       try{
         const r = await fetch(`${base}/status`, {signal:AbortSignal.timeout(1500)});
         const j = JSON.parse(await r.text());
-        if(j.tvs) j.tvs.forEach(t=> addTv({name:t.name, ip:t.ip, model:t.model || "TV", via:"bridge"}, true));
+        if(j.tvs) j.tvs.forEach(t=> addTv({name:t.name, ip:t.ip, model:t.model || "TV"}, true));
       }catch{}
       if(!_wasBridge){ _wasBridge = true; autoResume(); setTimeout(()=>{ if(!state.connected && !state.scanning) doScan(); }, 1500); }
       updateUI();
@@ -140,84 +142,27 @@ async function checkBridge(){
 checkBridge();
 setInterval(checkBridge, 15000);
 
-// ---------- CAST SDK (direct, no PC) ----------
-function initCastApi(){
-  try{
-    if(castDirect.inited || !window.cast || !window.cast.framework || !window.chrome || !window.chrome.cast) return;
-    const ctx = window.cast.framework.CastContext.getInstance();
-    ctx.setOptions({
-      receiverApplicationId: window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-      autoJoinPolicy: window.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-      resumeSavedSession: true,
-    });
-    castDirect.player = new window.cast.framework.RemotePlayer();
-    castDirect.controller = new window.cast.framework.RemotePlayerController(castDirect.player);
-    ctx.addEventListener(window.cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onCastSession);
-    castDirect.inited = true; castDirect.available = true;
-    const s = ctx.getCurrentSession();
-    if(s){ castDirect.session = s; onCastSession({sessionState:"SESSION_RESUMED"}); }
-  }catch{ castDirect.available = false; }
-  updateUI();
-}
-window.__onGCastApiAvailable = function(ok){ if(ok) initCastApi(); };
-window.addEventListener("load", ()=> setTimeout(()=>{ initCastApi(); if(window._gcastOk) initCastApi(); }, 600));
-function castConnectTap(){
-  try{
-    if(!castDirect.available || !window.cast || !window.cast.framework) throw new Error("no-cast");
-    const ctx = window.cast.framework.CastContext.getInstance();
-    const existing = ctx.getCurrentSession();
-    if(existing){ castDirect.session = existing; onCastSession({sessionState:"SESSION_RESUMED"}); return; }
-    if(!window._castLaunchOk){
-      if(!confirm("Connect opens the Cast screen on your TV (the remote channel). Continue?")) return;
-      window._castLaunchOk = true;
-    }
-    ctx.requestSession();
-  }catch{ toast("Direct Cast needs Chrome on Android + same Wi-Fi", "bad"); }
-}
-function onCastSession(e){
-  try{
-    const st = (e && e.sessionState) || "";
-    if(st === "SESSION_STARTED" || st === "SESSION_RESUMED"){
-      const s = window.cast.framework.CastContext.getInstance().getCurrentSession();
-      if(!s) return;
-      castDirect.session = s;
-      let name = "Chromecast";
-      try{ const d = s.getCastDevice && s.getCastDevice(); if(d && d.friendlyName) name = String(d.friendlyName).slice(0,40); }catch{}
-      let tv = state.tvs.find(t=> t.via === "cast");
-      if(!tv){ tv = {id:uid(), name, ip:"", model:"Chromecast", via:"cast"}; state.tvs.push(tv); }
-      tv.name = name;
-      connectTv(tv);
-      toast(`Connected: ${name}`, "good");
-    } else if(st === "SESSION_ENDED" || st === "SESSION_ENDING"){
-      castDirect.session = null;
-      const tv = state.tvs.find(t=> t.via === "cast");
-      if(tv && state.connected === tv) disconnect();
-    }
-  }catch{}
-  updateUI();
-}
-
 // ---------- TV LIST + CONNECT ----------
 function isValidIpv4(ip){
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec((ip || "").trim());
   return !!m && m.slice(1).every(o=> +o >= 0 && +o <= 255);
 }
 function sameSubnet(ip){ return !state.subnet || ip.split(".").slice(0,3).join(".") === state.subnet; }
-function addTv({name, ip, model, via}, quiet){
+function addTv({name, ip, model}, quiet){
   if(ip && state.tvs.some(t=> t.ip === ip)) return;
-  state.tvs.push({id:uid(), name:name || "TV", ip:ip || "", model:(model || "TV").slice(0,32), via:via || "manual"});
+  state.tvs.push({id:uid(), name:name || "TV", ip:ip || "", model:(model || "TV").slice(0,32), via:"helper"});
   if(!quiet) updateUI();
 }
+// Validation = "is this TV real, on my network, answering?" Only then connect.
 async function validateTv(tv){
-  if(tv.via === "cast") return {ok:!!castDirect.session, via:"cast", reason:"Cast session ended — tap Connect again"};
   if(!isValidIpv4(tv.ip)) return {ok:false, reason:"Bad IP address"};
   if(!sameSubnet(tv.ip)) return {ok:false, reason:`${tv.ip} is not on your Wi-Fi (${state.subnet}.0/24)`};
-  if(!state.bridge) return {ok:false, reason:"Helper not running — open the helper URL or tap 📺 Connect"};
+  if(!state.bridge) return {ok:false, reason:"Helper not running — start it, then Scan"};
   try{
     const r = await fetchBridge(`/validate?ip=${encodeURIComponent(tv.ip)}`, {signal:AbortSignal.timeout(12000)});
     const j = JSON.parse(await r.text());
-    if(j && j.valid) return {ok:true, via:"bridge-" + (j.via || "adb"), name:j.name || ""};
-    return {ok:false, reason:`${tv.ip} is quiet — TV off? Same Wi-Fi? For arrows+typing enable Network debugging on the TV.`};
+    if(j && j.valid) return {ok:true, via:"helper-" + (j.via || "adb"), name:j.name || ""};
+    return {ok:false, reason:`${tv.ip} is quiet — TV on? Same Wi-Fi? Network debugging enabled on the TV?`};
   }catch{ return {ok:false, reason:"Helper unreachable"}; }
 }
 async function initiateConnect(tv){
@@ -230,21 +175,15 @@ async function initiateConnect(tv){
   connectTv(tv);
 }
 function connectTv(tv){
-  state.connected = tv;
+  state.connected = tv; // stateless from here: every key is its own signal
   try{
     localStorage.setItem("savedTvName", tv.name);
     if(tv.ip) localStorage.setItem("savedTvIp", tv.ip);
-    localStorage.setItem("savedTvVia", tv.via);
   }catch{}
   updateUI();
   toast(`Connected: ${tv.name}`, "good");
-  if(tv.via === "bridge-cast") toast("Chromecast via helper: volume + play + quit work", "good");
 }
 function disconnect(){
-  if(state.connected && state.connected.via === "cast"){
-    try{ castDirect.session.endSession(true); }catch{}
-    castDirect.session = null;
-  }
   state.connected = null;
   try{ localStorage.removeItem("savedTvIp"); }catch{}
   updateUI();
@@ -252,14 +191,14 @@ function disconnect(){
 }
 async function autoResume(){
   if(state.connected || state.scanning) return;
-  let ip = null, via = null;
-  try{ ip = localStorage.getItem("savedTvIp"); via = localStorage.getItem("savedTvVia"); }catch{}
+  let ip = null;
+  try{ ip = localStorage.getItem("savedTvIp"); }catch{}
   if(!ip || !isValidIpv4(ip) || !sameSubnet(ip)) return;
   for(let i = 0; i < 20 && !state.subnet; i++) await new Promise(r=> setTimeout(r, 100));
   if(!sameSubnet(ip)) return;
-  addTv({name:"Saved TV", ip, via:"bridge"}, true);
+  addTv({name:"Saved TV", ip}, true);
   const tv = state.tvs.find(t=> t.ip === ip);
-  if(tv && via !== "cast"){
+  if(tv){
     const v = await validateTv(tv);
     if(v.ok){ if(v.via) tv.via = v.via; connectTv(tv); }
   }
@@ -269,13 +208,13 @@ function renderTvs(){
   const list = $("#tvList");
   if(!list) return;
   const others = state.tvs.filter(t=> t !== state.connected);
-  list.innerHTML = others.length ? "" : `<div class="empty" style="color:var(--muted);font-size:.85em">No other TVs. Scan appears here automatically.</div>`;
+  list.innerHTML = others.length ? "" : `<div style="color:var(--muted);font-size:.85em">No other TVs found yet — tap Scan.</div>`;
   others.forEach(tv=>{
     const el = document.createElement("div");
     el.className = "tv-item";
     el.innerHTML = `<div class="tv-avatar">${(tv.name[0] || "T").toUpperCase()}</div>
       <div class="tv-item-main"><div class="tv-item-name">${tv.name}</div>
-      <div class="tv-item-meta">${tv.ip || "direct"} • ${tv.model}</div></div>
+      <div class="tv-item-meta">${tv.ip || ""} • ${tv.model}</div></div>
       <button class="btn small primary">Connect</button>`;
     el.onclick = ()=> initiateConnect(tv);
     list.appendChild(el);
@@ -290,50 +229,21 @@ function updateUI(){
   if(c){
     $("#tvName").textContent = state.connected.name;
     $("#tvAvatar").textContent = (state.connected.name[0] || "T").toUpperCase();
-    const viaTxt = state.connected.via === "cast" ? "Cast direct — media keys"
-      : state.connected.via === "bridge-adb" ? "Full control — arrows + typing"
-      : state.connected.via === "bridge-cast" ? "Chromecast via helper — media keys"
-      : state.connected.via === "bridge-dial" ? "Basic — quit app only" : state.connected.via;
-    $("#tvMeta").textContent = `${state.connected.ip || "direct"} • ${viaTxt}`;
+    $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.via === "helper-adb" ? "Full control — arrows + typing" : "Basic — Home/Back quit app"}`;
     $("#heroTvName").textContent = state.connected.name;
   } else {
     $("#heroTvName").textContent = "No TV yet";
   }
-  const showCast = castDirect.available && !c;
-  const cb = $("#castBtn");
-  if(cb){ if(!cb._wired){ cb._wired = true; cb.onclick = castConnectTap; } cb.style.display = showCast ? "" : "none"; }
+  const bh = $("#bridgeHint");
+  if(bh) bh.innerHTML = state.bridge
+    ? `Helper OK — full remote signals ready.`
+    : `Helper not found. Run <code>node server.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan.`;
   renderTvs();
 }
 
-// ---------- SEND ----------
-function castVolumeRequest(level, muted){
-  const nv = new window.chrome.cast.Volume();
-  if(level !== undefined && level !== null) nv.level = clamp(Math.round(level*100)/100, 0, 1);
-  if(muted !== undefined && muted !== null) nv.muted = !!muted;
-  return nv;
-}
-function castStepVolume(d){
-  try{
-    const s = castDirect.session;
-    if(!s) return false;
-    const v = s.getVolume() || {};
-    s.setVolume(castVolumeRequest((v.level == null ? 0.5 : v.level) + d, false),
-      ()=>{}, e=> errToastOnce("TV refused volume"));
-    return true;
-  }catch{ return false; }
-}
-function castSeek(d){
-  try{
-    const p = castDirect.player, c = castDirect.controller;
-    if(p && c && p.canSeek && isFinite(p.duration) && p.duration > 0){
-      p.currentTime = clamp((p.currentTime || 0) + d, 0, p.duration);
-      c.seek(); return true;
-    }
-  }catch{}
-  return false;
-}
+// ---------- SEND (one signal per keypress, like a real remote) ----------
 async function sendCommand(cmd, payload=""){
-  if(!state.connected){ errToastOnce("Not connected — tap 📺 Connect my TV first"); return; }
+  if(!state.connected){ errToastOnce("Not connected — scan and connect first"); return; }
   const tv = state.connected;
   if(cmd === "TEXT" && !state.searchActive){
     state.word += payload;
@@ -341,59 +251,37 @@ async function sendCommand(cmd, payload=""){
     toast(`Search off: “${payload}” buffered — turn 🔍 Search on to type`, "bad");
     return;
   }
-  // --- direct Cast (no helper) ---
-  if(tv.via === "cast"){
-    let ok = false, note = "";
-    try{
-      switch(cmd){
-        case "UP": ok = castStepVolume(0.05); break;
-        case "DOWN": ok = castStepVolume(-0.05); break;
-        case "LEFT": ok = castSeek(-30); note = "−30s"; break;
-        case "RIGHT": ok = castSeek(30); note = "+30s"; break;
-        case "OK":
-          if(castDirect.controller){ castDirect.controller.playOrPause(); ok = true; note = "Play/pause"; }
-          break;
-        case "MUTE":
-          if(castDirect.controller){ castDirect.controller.muteOrUnmute(); ok = true; note = "Mute"; }
-          break;
-        case "HOME": case "BACK": case "POWER":
-          castDirect.session.endSession(true); ok = true; note = "Back to home"; break;
-        case "TEXT": toast("Typing needs an Android TV + helper", "bad"); return;
-        default: return;
-      }
-    }catch{ ok = false; }
-    if(ok){ if(note) toast(note, "good"); flashCmd(cmd); }
-    else if(cmd !== "LEFT" && cmd !== "RIGHT") errToastOnce("Nothing to control — play something first");
-    return;
-  }
-  // --- helper (bridge) ---
   if(!state.bridge || !bridgeBase){ errToastOnce("Helper not running"); return; }
   try{
     const r = await fetch(`${bridgeBase}/cmd`, {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ip:tv.ip, cmd, payload}), signal:AbortSignal.timeout(10000)});
     const j = JSON.parse(await r.text());
     if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
-    else errToastOnce({diallimited:"Basic TV — Home quits the app", nodpad:"No arrows on this TV"}[(j && j.error)] || "TV refused the key");
+    else errToastOnce(j && j.error === "diallimited" ? "Basic TV — Home/Back quit the app" : "TV ignored the key — on? Same Wi-Fi?");
   }catch{ errToastOnce("Helper unreachable"); state.bridge = false; checkBridge(); }
 }
 const ZONE_OF_CMD = {UP:"UP", DOWN:"DOWN", LEFT:"LEFT", RIGHT:"RIGHT", OK:"CENTER"};
 function flashCmd(cmd){
   const zone = ZONE_OF_CMD[cmd];
   if(zone) $$("#dpadMini .mini-btn").forEach(b=> b.classList.toggle("active", b.dataset.zone === zone));
-  $$(`.dpad-btn`).forEach(b=> b.classList.toggle("active", b.dataset.cmd === cmd));
+  $$(".dpad-btn").forEach(b=> b.classList.toggle("active", b.dataset.cmd === cmd));
   setTimeout(()=>{
     $$("#dpadMini .mini-btn").forEach(b=> b.classList.remove("active"));
-    $$(`.dpad-btn`).forEach(b=> b.classList.remove("active"));
+    $$(".dpad-btn").forEach(b=> b.classList.remove("active"));
   }, 420);
 }
 
 // ---------- REMOTE UI ----------
 $$(".dpad-btn, .qbtn").forEach(b=>{ b.onclick = ()=>{ if(b.dataset.cmd) sendCommand(b.dataset.cmd); }; });
 $("#disconnectBtn").onclick = disconnect;
+$("#scanBtn").onclick = ()=>{
+  if(!state.bridge){ toast("Helper not found — start it first (Termux on phone, or PC)", "bad"); checkBridge(); return; }
+  doScan();
+};
 $("#addManualBtn").onclick = async ()=>{
   const ip = $("#manualIp").value.trim();
   if(!isValidIpv4(ip)){ toast("Type a valid IP like 192.168.1.84", "bad"); return; }
-  addTv({name:"Manual TV", ip, via:"bridge"});
+  addTv({name:"Manual TV", ip});
   $("#manualIp").value = "";
   const tv = state.tvs.find(t=> t.ip === ip);
   if(tv) initiateConnect(tv);
@@ -431,33 +319,41 @@ document.addEventListener("keydown", e=>{
   else if(e.key.toLowerCase() === "m") sendCommand("MUTE");
 });
 
-// ---------- SCAN (helper only, quiet) ----------
+// ---------- SCAN (helper, quiet) ----------
 async function doScan(){
-  if(state.scanning || !state.bridge) return;
+  if(state.scanning) return;
+  if(!state.bridge){ toast("Helper not found — start it first", "bad"); checkBridge(); return; }
   state.scanning = true;
+  toast("Scanning your Wi-Fi…");
   try{
     const r = await fetchBridge("/scan", {signal:AbortSignal.timeout(8000)});
     const j = JSON.parse(await r.text());
     if(j && j.tvs) for(const t of j.tvs){
       if(!t.ip || state.tvs.some(x=> x.ip === t.ip)) continue;
-      addTv({name:t.name, ip:t.ip, model:t.model || "TV", via:"bridge"}, true);
+      addTv({name:t.name, ip:t.ip, model:t.model || "TV"}, true);
     }
-    fetch("scan-results.json", {cache:"no-store"}).then(async r2=>{
-      if(!r2.ok) return null;
-      try{ const t = await r2.text(); return t && t.trim() ? JSON.parse(t) : null; }catch{ return null; }
-    }).then(j2=>{
-      if(j2 && j2.devices) for(const d of j2.devices){
-        if(d.ip && !state.tvs.some(x=> x.ip === d.ip)) addTv({name:d.name || "TV", ip:d.ip, model:"TV", via:"bridge"}, true);
-      }
-      updateUI();
-    }).catch(()=>{});
   }catch{}
+  updateUI();
+  if(!state.connected && state.tvs.length){
+    for(const tv of state.tvs){
+      const v = await validateTv(tv);
+      tv._v = v;
+      if(v.ok){ tv.via = v.via; if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name; }
+    }
+    updateUI();
+    let pick = null;
+    try{ const s = localStorage.getItem("savedTvIp"); pick = s && state.tvs.find(t=> t.ip === s && t._v && t._v.ok); }catch{}
+    pick = pick || state.tvs.find(t=> t._v && t._v.ok);
+    if(pick) connectTv(pick);
+    else toast("TVs seen but quiet — TV on? Same Wi-Fi? Network debugging?", "bad");
+  } else if(!state.tvs.length){
+    toast("No TVs answered — TV on? Same Wi-Fi as helper?", "bad");
+  }
   state.scanning = false;
   updateUI();
 }
 
 // ---------- GESTURE ENGINE ----------
-// finger math (recovered from the proven build)
 function angleAt(a,b,c){
   const ux=a.x-b.x, uy=a.y-b.y, vx=c.x-b.x, vy=c.y-b.y;
   const dot=ux*vx+uy*vy, lu=Math.hypot(ux,uy), lv=Math.hypot(vx,vy);
@@ -676,7 +572,7 @@ function drawZones(){
   ctx.fillText("CENTER — idle", w/2, cy0 - 8*dpr);
 }
 function clearTrail(){
-  if(zoneOverlay){ const ctx = zoneOverlay.getContext("2d"); ctx.clearRect(0, 0, zoneOverlay.width, zoneOverlay.height); drawZones(); }
+  if(zoneOverlay){ zoneOverlay.getContext("2d").clearRect(0, 0, zoneOverlay.width, zoneOverlay.height); drawZones(); }
 }
 $("#cooldownRange").oninput = e=>{ state.DWELL_MS = parseInt(e.target.value); $("#cooldownVal").textContent = (state.DWELL_MS/1000) + "s"; };
 $("#deadRange").oninput = e=>{ state.deadPct = parseInt(e.target.value); $("#deadVal").textContent = state.deadPct + "%"; drawZones(); _fsGridFresh = false; };
@@ -684,7 +580,6 @@ $("#pauseGestures").onchange = e=> state.pause = e.target.checked;
 if(mirrorToggle) mirrorToggle.onchange = ()=> videoWrap.classList.toggle("mirror", mirrorToggle.checked);
 if(videoWrap && mirrorToggle) videoWrap.classList.toggle("mirror", mirrorToggle.checked);
 
-// fullscreen painters (one clear → grid + skeleton + trail)
 function strokeFsSkeleton(ctx, pts, dpr){
   if(typeof HAND_CONNECTIONS !== "undefined"){
     ctx.lineWidth = 2.5*dpr; ctx.lineCap = "round"; ctx.strokeStyle = "rgba(0,245,255,.9)";
@@ -736,8 +631,10 @@ function fsPaint(landmarks){
   strokeFsGrid(ctx, cw, ch, dpr);
   strokeFsSkeleton(ctx, pts, dpr);
   if(state.drawing && state.drawPoints.length > 1){
-    const tp = state.drawPoints.map(p=>({nx:mirror ? 1-p.nx : p.nx, ny:p.ny}));
-    const px = tp.map(p=>({nx:(ox + p.nx*vw*scale)/cw, ny:(oy + p.ny*vh*scale)/ch}));
+    const px = state.drawPoints.map(p=>{
+      const qx = mirror ? 1-p.nx : p.nx;
+      return {nx:(ox + qx*vw*scale)/cw, ny:(oy + p.ny*vh*scale)/ch};
+    });
     strokeTrail(ctx, px, cw, ch, dpr);
   }
   _fsGridFresh = true;
@@ -833,25 +730,7 @@ function setZoneHud(txt){
   if(zoneLabel && zoneLabel._v !== txt){ zoneLabel._v = txt; zoneLabel.textContent = txt; }
 }
 
-// draw handling
-function drawPointOnSmall(nx, ny){
-  if(!zoneOverlay) return;
-  const dpr = window.devicePixelRatio || 1;
-  const ctx = zoneOverlay.getContext("2d");
-  const pts = state.drawPoints;
-  if(pts.length > 1){
-    const a = pts[pts.length-2], b = pts[pts.length-1];
-    ctx.strokeStyle = "rgba(0,245,255,1)"; ctx.lineWidth = 4*dpr;
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.shadowColor = "rgba(0,245,255,.7)"; ctx.shadowBlur = 8*dpr;
-    ctx.beginPath();
-    ctx.moveTo(a.nx*zoneOverlay.width, a.ny*zoneOverlay.height);
-    ctx.lineTo(b.nx*zoneOverlay.width, b.ny*zoneOverlay.height);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-  void nx; void ny;
-}
+// draw handling — two-finger trail, lift to recognize + type
 function handleDrawPoint(nx, ny){
   if(!state.drawing){
     state.drawing = true;
@@ -861,7 +740,20 @@ function handleDrawPoint(nx, ny){
   }
   state.drawPoints.push({nx, ny});
   state.lastDrawEnd = now();
-  drawPointOnSmall(nx, ny);
+  state._stroke = state.drawPoints.slice();
+  if(zoneOverlay && state.drawPoints.length > 1){
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = zoneOverlay.getContext("2d");
+    const a = state.drawPoints[state.drawPoints.length-2], b = state.drawPoints[state.drawPoints.length-1];
+    ctx.strokeStyle = "rgba(0,245,255,1)"; ctx.lineWidth = 4*dpr;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.shadowColor = "rgba(0,245,255,.7)"; ctx.shadowBlur = 8*dpr;
+    ctx.beginPath();
+    ctx.moveTo(a.nx*zoneOverlay.width, a.ny*zoneOverlay.height);
+    ctx.lineTo(b.nx*zoneOverlay.width, b.ny*zoneOverlay.height);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
 }
 function scheduleDrawEnd(){
   if(state._drawTimer || !state.drawing) return;
@@ -933,7 +825,7 @@ function onHandsResults(results){
   state._thumbUpFrames = upRaw ? state._thumbUpFrames + 1 : 0;
   const fist = state._fistFrames >= 3, thumbDown = state._thumbDownFrames >= 3, thumbUp = state._thumbUpFrames >= 3;
 
-  let tip = landmarks[8];
+  const tip = landmarks[8];
   let nx = tip.x, ny = tip.y;
   if(mirrorToggle.checked) nx = 1 - nx;
   const palm = landmarks[9];
@@ -946,7 +838,6 @@ function onHandsResults(results){
     resetDwell();
     setZoneHud("DRAW");
     handleDrawPoint(nx, ny);
-    state._stroke = state.drawPoints.slice();
     return;
   }
   if(state.drawing && !two){ scheduleDrawEnd(); gestureHud("Finishing stroke…"); return; }
@@ -1073,7 +964,7 @@ if(camToggle) camToggle.onclick = ()=>{ running ? stopCamera() : startCamera(); 
 (async function boot(){
   await detectSubnet();
   paintWord();
-  resizeOverlays(); drawZones(); updateUI(); initCastApi();
+  resizeOverlays(); drawZones(); updateUI();
   if(state.bridge) doScan();
   setTimeout(()=>{ if(state.bridge && !state.tvs.length) doScan(); }, 2500);
   window.addEventListener("beforeunload", ()=>{ if(running) stopCamera(); });
