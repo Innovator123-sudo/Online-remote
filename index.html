@@ -8,6 +8,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script>
+window._gcastOk = false;
+window.__onGCastApiAvailable = function(ok){ window._gcastOk = !!ok; };
+</script>
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 <!-- MediaPipe (deferred so first paint isn't blocked; needed only when camera starts) -->
 <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
@@ -126,6 +131,8 @@
           <div class="big-icon">📺</div>
           <p>Not connected</p>
           <small>Select a TV from the list and pair with the 6-digit code shown on the TV.</small>
+          <button class="btn primary" id="castConnectBtn" style="margin-top:10px;display:none">📺 Connect directly via Cast (no PC)</button>
+          <small id="castHint" style="display:none;opacity:.7">Android + Chrome, same Wi-Fi — one tap, then pick your TV.</small>
         </div>
         <div id="remotePanel" class="remote-panel hidden">
           <div class="tv-info">

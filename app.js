@@ -156,6 +156,8 @@ function copyText(txt, label){
     } else window.prompt("Copy this link:", txt);
   }catch{ try{ window.prompt("Copy this link:", txt); }catch{} }
 }
+// Direct-Cast state (phone → Chromecast, no PC/bridge). Filled by the Cast SDK.
+const castDirect = {available:false, inited:false, session:null, player:null, controller:null};
 
 const themeToggle = $("#themeToggle");
 if(localStorage.getItem("theme")) document.documentElement.setAttribute("data-theme", localStorage.getItem("theme"));
@@ -302,9 +304,13 @@ function renderBridgeIpRow(){
     const subnet = state.subnet ? state.subnet + ".0/24" : "detecting…";
     let savedHost = "";
     try{ const s = localStorage.getItem("bridgeBase") || ""; savedHost = (s.match(/^https?:\/\/([^:/]+)/)||[])[1] || ""; }catch{}
-    b.innerHTML = `<strong>📱 On your phone? 30-second setup (once):</strong><br>1️⃣ Join your <strong>home Wi-Fi</strong> on this device (mobile data OFF) — you appear as: <strong>${subnet}</strong><br>2️⃣ On your home PC open this same page → <strong>Copy the 📱 link</strong> → open it here.<br>3️⃣ If the browser asks to “access devices on your local network”, tap <strong>Allow</strong>.` +
+    const castLine = (castDirect.available && !state.connected)
+      ? `0️⃣ <strong>Skip the PC entirely:</strong> tap <button class="btn small primary" id="bannerCastBtn" style="margin:2px 0">📺 Connect directly</button> and pick your TV.<br>` : "";
+    b.innerHTML = castLine + `<strong>📱 On your phone? 30-second setup (once):</strong><br>1️⃣ Join your <strong>home Wi-Fi</strong> on this device (mobile data OFF) — you appear as: <strong>${subnet}</strong><br>2️⃣ On your home PC open this same page → <strong>Copy the 📱 link</strong> → open it here.<br>3️⃣ If the browser asks to “access devices on your local network”, tap <strong>Allow</strong>.` +
       (savedHost ? `<br>🌉 Bridge target saved: <strong>${savedHost}</strong> — <span id="bridgeReachTest">testing…</span>` : `<br>🌉 No bridge saved on this device yet — step 2 fills it in automatically.`);
     wrap.append(b);
+    const bcb = b.querySelector("#bannerCastBtn");
+    if(bcb) bcb.onclick = castConnectTap;
     if(savedHost){
       (async()=>{
         let target = "";
@@ -372,6 +378,134 @@ function renderBridgeIpRow(){
 }
 checkBridge();
 setInterval(checkBridge, 15000);
+
+// ---------- DIRECT CAST (phone → Chromecast, no PC, no bridge) ----------
+// Uses the Cast Web SDK built into Chrome (Android). Same Wi-Fi only.
+// One user tap on 📺 opens the system device picker (browser requirement),
+// then everything — buttons AND gesture zones — drives the TV directly.
+function initCastApi(){
+  try{
+    if(castDirect.inited || !window.cast || !window.cast.framework || !window.chrome || !window.chrome.cast) return;
+    const ctx = window.cast.framework.CastContext.getInstance();
+    ctx.setOptions({
+      receiverApplicationId: window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+      autoJoinPolicy: window.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+      resumeSavedSession: true,
+    });
+    castDirect.player = new window.cast.framework.RemotePlayer();
+    castDirect.controller = new window.cast.framework.RemotePlayerController(castDirect.player);
+    ctx.addEventListener(window.cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onCastSession);
+    castDirect.inited = true;
+    castDirect.available = true;
+    const s = ctx.getCurrentSession();
+    if(s){ castDirect.session = s; onCastSession({sessionState: "SESSION_RESUMED"}); }
+  }catch{ castDirect.available = false; }
+  try{ updateCastBtn(); }catch{}
+  try{ if(typeof renderBridgeIpRow === "function") renderBridgeIpRow(); }catch{}
+}
+window.__onGCastApiAvailable = function(ok){ if(ok) initCastApi(); };
+window.addEventListener("load", ()=> setTimeout(()=>{ initCastApi(); if(window._gcastOk) initCastApi(); }, 600));
+function updateCastBtn(){
+  const show = castDirect.available && !state.connected;
+  const cb = $("#castConnectBtn"), hint = $("#castHint");
+  if(cb){ if(!cb._wired){ cb._wired = true; cb.onclick = castConnectTap; } cb.style.display = show ? "" : "none"; }
+  if(hint) hint.style.display = show ? "" : "none";
+}
+function castConnectTap(){
+  try{
+    if(!castDirect.available || !window.cast || !window.cast.framework) throw new Error("no-cast");
+    window.cast.framework.CastContext.getInstance().requestSession();
+  }catch{
+    toast("Direct Cast needs Chrome on Android (same Wi-Fi)", "bad");
+  }
+}
+function onCastSession(e){
+  try{
+    const st = (e && e.sessionState) || "";
+    if(st === "SESSION_STARTED" || st === "SESSION_RESUMED"){
+      const ctx = window.cast.framework.CastContext.getInstance();
+      const s = ctx.getCurrentSession();
+      if(!s) return;
+      castDirect.session = s;
+      let name = "Chromecast";
+      try{ const d = s.getCastDevice && s.getCastDevice(); if(d && d.friendlyName) name = String(d.friendlyName).slice(0, 40); }catch{}
+      let tv = state.tvs.find(t=> t.transport === "cast-direct");
+      if(!tv){
+        addTv({name, ip: "direct-cast", model: "Chromecast", via: "cast"});
+        tv = state.tvs.find(t=> t.transport === "cast-direct");
+      }
+      if(tv){
+        tv.name = name;
+        tv.paired = true;
+        tv._validated = true;
+        tv.invalid = false;
+        tv.transport = "cast-direct";
+        try{ localStorage.setItem("paired_direct-cast", "true"); }catch{}
+        renderTvs();
+        if(!state.connected || state.connected.transport !== "cast-direct") connectTv(tv, false);
+        else showConnected();
+        toast(`Cast connected: ${name} — no PC needed`, "good");
+      }
+    } else if(st === "SESSION_ENDED" || st === "SESSION_ENDING"){
+      castDirect.session = null;
+      if(state.connected && state.connected.transport === "cast-direct") disconnect();
+    }
+  }catch{}
+  try{ updateCastBtn(); }catch{}
+}
+function castStepVolume(delta){
+  try{
+    const s = castDirect.session;
+    if(!s) return false;
+    const v = s.getVolume() || {level: 0.5, muted: false};
+    const nv = new window.chrome.cast.Volume(
+      clamp(Math.round(((v.level == null ? 0.5 : v.level) + delta) * 100) / 100, 0, 1),
+      false);
+    s.setVolume(nv, ()=>{}, ()=>{});
+    return true;
+  }catch{ return false; }
+}
+function castSeek(delta){
+  try{
+    const p = castDirect.player, c = castDirect.controller;
+    if(p && c && p.canSeek && isFinite(p.duration) && p.duration > 0){
+      p.currentTime = clamp((p.currentTime || 0) + delta, 0, p.duration);
+      c.seek();
+      return true;
+    }
+  }catch{}
+  return false;
+}
+// Returns true if the key was handled on the Cast session.
+function castDirectCommand(cmd){
+  if(!castDirect.session){
+    errToastOnce("Cast session ended — tap 📺 Connect again");
+    return false;
+  }
+  try{
+    switch(cmd){
+      case "VOLUME_UP": case "DPAD_UP": return castStepVolume(0.05);
+      case "VOLUME_DOWN": case "DPAD_DOWN": return castStepVolume(-0.05);
+      case "MUTE": {
+        if(castDirect.controller){ castDirect.controller.muteOrUnmute(); return true; }
+        const v = castDirect.session.getVolume() || {muted: false};
+        const nv = new window.chrome.cast.Volume(v.level == null ? 0.5 : v.level, !v.muted);
+        castDirect.session.setVolume(nv, ()=>{}, ()=>{});
+        return true;
+      }
+      case "DPAD_CENTER": case "ENTER":
+        if(castDirect.controller){ castDirect.controller.playOrPause(); return true; }
+        return false;
+      case "DPAD_LEFT": return castSeek(-30) || (toast("Nothing seekable playing", "bad"), false);
+      case "DPAD_RIGHT": return castSeek(30) || (toast("Nothing seekable playing", "bad"), false);
+      case "HOME": case "BACK": case "POWER":
+        castDirect.session.endSession(true); // quit app → backdrop (≈ home)
+        return true;
+      case "TEXT": toast("Typing needs the TV keyboard open — use the TV remote", "bad"); return false;
+      default: return false;
+    }
+  }catch{ errToastOnce("Cast command failed"); return false; }
+}
 
 const POOL = [
   {name:"Living Room TV", model:"TCL Android TV", icon:"L"},
@@ -452,6 +586,7 @@ function renderTvs(){
       if(tv) initiateConnect(tv);
     };
   });
+  try{ updateCastBtn(); }catch{}
 }
 // TV name search — filter by device name tv (user requested: search device name tv)
 const tvSearchEl = $("#tvSearch");
@@ -611,6 +746,7 @@ function sameSubnetAsMe(ip){
 // (ADB full D-Pad > Chromecast media keys > DIAL app-quit). Quiet — exactly
 // ONE toast/log on failure, never per-probe spam.
 async function validateTv(tv){
+  if(tv.transport === "cast-direct") return {ok:true, via:"cast-direct"}; // browser Cast session — already live
   if(!isValidIpv4(tv.ip)) return {ok:false, reason:`"${tv.ip}" is not a valid IPv4 address`};
   if(!sameSubnetAsMe(tv.ip)){
     return {ok:false, reason:`${tv.ip} is not on your Wi-Fi (${state.subnet}.0/24). TV + this device must share the same network.`};
@@ -821,7 +957,7 @@ function connectTv(tv, autoFs=true){
   $("#connPill").classList.add("connected");
   $("#connText").textContent = tv.name;
   log(`Connected to ${tv.name} (${tv.ip})`, "good");
-  if(state.bridge){
+  if(state.bridge && tv.transport !== "cast-direct"){
     fetchBridge(`/state?ip=${encodeURIComponent(tv.ip)}`).then(r=>r.json()).then(j=>{
       if(typeof j.searchActive === "boolean"){
         $("#searchToggle").checked = j.searchActive;
@@ -841,8 +977,11 @@ function showConnected(){
   $("#tvName").textContent = state.connected.name;
   const isDemo = isHostedPage && state.connected.via === "demo";
   const tp = state.connected.transport;
-  const tpNote = tp === "cast" ? " • Cast media mode" : tp === "dial" ? " • Basic mode" : "";
-  $("#tvMeta").textContent = `${state.connected.ip} • ${state.connected.model} • Paired${isDemo ? ' • Demo Mode' : ''}${tpNote}`;
+  const tpNote = tp === "cast" ? " • Cast media mode" : tp === "dial" ? " • Basic mode" : tp === "cast-direct" ? " • Cast direct — no PC" : "";
+  const metaBase = tp === "cast-direct"
+    ? `${state.connected.name} • Cast direct — no PC needed`
+    : `${state.connected.ip} • ${state.connected.model} • Paired${isDemo ? ' • Demo Mode' : ''}${tpNote}`;
+  $("#tvMeta").textContent = metaBase;
   renderLog();
   if(tp === "cast") toast("Chromecast: OK = play/pause, Home = quit app, volume works (no D-Pad on Chromecast)", "good");
   else if(tp === "dial") toast("Basic mode: Home/Back quit the running app. Wake TV + enable Network debugging for more.", "good");
@@ -905,7 +1044,16 @@ function warnHostedNoBridge(){
 
 async function sendCommand(cmd, payload=""){
   if(!state.connected){
-    errToastOnce("Not connected — scan, validate, then connect first");
+    errToastOnce("Not connected — tap 📺 Connect (no PC) or scan, then use the remote");
+    return;
+  }
+  // Direct-Cast path: phone → Chromecast over the Cast SDK. No bridge involved.
+  if(state.connected.transport === "cast-direct"){
+    const keys = {DPAD_UP:"UP", DPAD_DOWN:"DOWN", DPAD_LEFT:"LEFT", DPAD_RIGHT:"RIGHT", DPAD_CENTER:"CENTER"};
+    if(castDirectCommand(cmd, payload)){
+      log(`Cast ${cmd}${payload?` → ${payload}`:""}`, "good");
+      if(keys[cmd]) flashZone(keys[cmd]);
+    }
     return;
   }
   if(cmd==="TEXT" && !state.searchActive){
