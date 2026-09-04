@@ -1,1 +1,1 @@
-web: node facilities/remote-cloud-server.js
+web: node helper.js

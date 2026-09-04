@@ -120,8 +120,26 @@ function cleanup(id) {
   users.delete(id);
 }
 
+// Handle errors
+server.on('error', (err) => {
+  console.error(`❌ Server error: ${err.message}`);
+  console.error(err.stack);
+  process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
 server.listen(PORT, () => {
   console.log(`✅ Cloud server running on port ${PORT}`);
   console.log(`🌐 Web UI available at http://localhost:${PORT}/`);
   console.log(`💬 WebSocket relay ready for connections`);
+}).on('listening', () => {
+  console.log(`🎉 Server successfully started and listening`);
 });
