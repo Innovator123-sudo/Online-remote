@@ -295,6 +295,26 @@ function renderBridgeIpRow(){
   }
   const saved = bridgeBase || (()=>{ try{return localStorage.getItem("bridgeBase")||""}catch{return ""} })();
   wrap.innerHTML = "";
+  // Phone setup banner: shown only while bridgeless. Diagnoses the exact blocker.
+  if(!state.bridge){
+    const b = document.createElement("div");
+    b.style.cssText = "width:100%;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.35);border-radius:12px;padding:10px 12px;font-size:.85em;line-height:1.65";
+    const subnet = state.subnet ? state.subnet + ".0/24" : "detecting…";
+    let savedHost = "";
+    try{ const s = localStorage.getItem("bridgeBase") || ""; savedHost = (s.match(/^https?:\/\/([^:/]+)/)||[])[1] || ""; }catch{}
+    b.innerHTML = `<strong>📱 On your phone? 30-second setup (once):</strong><br>1️⃣ Join your <strong>home Wi-Fi</strong> on this device (mobile data OFF) — you appear as: <strong>${subnet}</strong><br>2️⃣ On your home PC open this same page → <strong>Copy the 📱 link</strong> → open it here.<br>3️⃣ If the browser asks to “access devices on your local network”, tap <strong>Allow</strong>.` +
+      (savedHost ? `<br>🌉 Bridge target saved: <strong>${savedHost}</strong> — <span id="bridgeReachTest">testing…</span>` : `<br>🌉 No bridge saved on this device yet — step 2 fills it in automatically.`);
+    wrap.append(b);
+    if(savedHost){
+      (async()=>{
+        let target = "";
+        try{ target = localStorage.getItem("bridgeBase") || ""; }catch{}
+        const ok = target ? await probeBridgeBase(target, 2500) : false;
+        const el = document.getElementById("bridgeReachTest");
+        if(el) el.innerHTML = ok ? "reachable ✓ (connecting…)" : "NOT reachable — check steps 1–3 above, then Rescan Wi-Fi";
+      })();
+    }
+  }
   const input = document.createElement("input");
   input.id = "bridgeIpInput";
   input.placeholder = "Home bridge IP e.g. 192.168.1.67 (:5000)";
@@ -520,8 +540,13 @@ async function finishScan(){
   scanBtn.disabled=false; stopBtn.disabled=true;
   if(state.tvs.length===0){
     // NO fakes — real control is only possible with a real device found on the SAME Wi-Fi.
-    scanStatus.textContent="No real device found on this Wi-Fi. Make sure the TV and this PC are on the SAME network, then scan again.";
-    toast("No real TV found on same Wi-Fi — add it via Manual IP", "warn");
+    if(!state.bridge){
+      scanStatus.textContent = "No bridge on this device yet — open the 📱 invite link from your home PC (same Wi-Fi), then Rescan.";
+      toast("No bridge here — use the 📱 link from your PC", "bad");
+    } else {
+      scanStatus.textContent="No real device found on this Wi-Fi. Make sure the TV and this PC are on the SAME network, then scan again.";
+      toast("No real TV found on same Wi-Fi — add it via Manual IP", "warn");
+    }
   } else {
     // Zero-touch: validate EVERYTHING found (quiet, parallel), then auto-connect
     // the best one — saved TV first, else the first answering TV. Pair modal
