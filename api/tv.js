@@ -67,8 +67,21 @@ module.exports = async function handler(req, res){
   if(!validHost(host)) return deny('not a public address (home IPs use the LAN helper)');
   const target = `${host}:${port}`;
 
-  if(action === 'validate'){
-    const c = await run(['connect', target], 3500);
+  // Wireless-debug pairing: TV shows host + random port + 6-digit code
+  // (Developer options → Wireless debugging → Pair device with pairing code).
+  // After this succeeds, connect to host:5555 as usual.
+  if(action === 'pair'){
+    const host = String(q.host || '').trim();
+    const port = Math.max(1, Math.min(65535, parseInt(q.port || '0', 10) || 0));
+    const code = String(q.code || '').trim();
+    if(!validHost(host)) return deny('not a public address');
+    if(!port) return deny('bad pairing port (number shown on the TV)');
+    if(!/^\d{6}$/.test(code)) return deny('code is the 6 digits on the TV');
+    const r = await run(['pair', `${host}:${port}`, code], 9000);
+    if(!r.err && /successfully paired/i.test(r.out)) return res.status(200).json({ok:true, paired:true, host});
+    return deny('pair failed (wrong code? code expired? ports reachable?)');
+  }
+  if(action === 'validate'){    const c = await run(['connect', target], 3500);
     if(c.err && !/already connected|connected/i.test(c.out)) return deny('unreachable');
     const t = await run(['-s', target, 'shell', 'echo', 'ok'], 5000);
     if(t.err) return deny('no adb answer (dep debugging on? prompt accepted?)');

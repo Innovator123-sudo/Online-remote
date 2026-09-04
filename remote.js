@@ -362,6 +362,24 @@ $("#saveKeyBtn").onclick = ()=>{
   toast(relayKey ? "Key saved — connect your TV" : "Key cleared", relayKey ? "good" : "");
   updateUI();
 };
+$("#pairBtn").onclick = async ()=>{
+  const host = (($("#pairHost") || {}).value || "").trim();
+  const port = (($("#pairPort") || {}).value || "").trim();
+  const code = (($("#pairCode") || {}).value || "").trim();
+  if(!host || !/^\d+$/.test(port) || !/^\d{6}$/.test(code)){ toast("Type host + port + 6-digit code from the TV screen", "bad"); return; }
+  if(!relayKey){ toast("Paste your relay key first (invite link has it)", "bad"); return; }
+  toast("Pairing with TV…");
+  try{
+    const j = await cloudApi(`action=pair&host=${encodeURIComponent(host)}&port=${encodeURIComponent(port)}&code=${encodeURIComponent(code)}`, 15000);
+    if(j && j.ok){
+      toast("Paired ✓ — connecting…", "good");
+      $("#manualIp").value = host; // address filled in for you
+      addTv({name:"Manual TV", ip:host});
+      const tv = state.tvs.find(x=> x.ip === host);
+      if(tv) initiateConnect(tv);
+    } else errToastOnce((j && j.error) || "Pair failed");
+  }catch{ errToastOnce("Cloud relay unreachable"); }
+};
 $("#searchToggle").onchange = e=>{
   state.searchActive = e.target.checked;
   toast(state.searchActive ? "🔍 Search ON — drawn letters type on the TV" : "Search off — letters buffer only", state.searchActive ? "good" : "");
