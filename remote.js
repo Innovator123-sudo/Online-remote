@@ -367,7 +367,7 @@ function updateUI(){
   const ks = $("#keyStatus");
   if(ks) ks.textContent = relayKey ? "✓ saved on this device — shown below" : "(paste once from your invite link — then it stays shown here)";
   const kshow = $("#keyShow");
-  if(kshow) kshow.textContent = relayKey ? `Current key: ${relayKey}` : "";
+  if(kshow) kshow.textContent = relayKey ? `Saved key: ${relayKey.slice(0,3)}…${relayKey.slice(-3)} (${relayKey.length} chars — hidden for safety)` : "";
   const tgl = $("#toggleKeyBtn");
   if(tgl && rk) tgl.textContent = rk.type === "password" ? "Show" : "Hide";
   const bh = $("#bridgeHint");
@@ -462,18 +462,20 @@ async function cloudRefresh(manual){
   }
   const checkingEl = manual ? toast("Checking saved TV through the cloud relay…") : null;
   if(manual) setScanStatus("Checking saved TV through the cloud relay…");
-  let connected = false;
+  let connected = false, lastReason = "";
   for(const c of cloudable){
     addTv({name:c.name, ip:c.ip}, true);
     const tv = state.tvs.find(x=> x.ip === c.ip);
     if(tv){
       const v = await validateTv(tv);
       if(v.ok){ if(checkingEl) checkingEl.remove(); setScanStatus(""); if(v.via) tv.via = v.via; connectTv(tv); connected = true; return; }
+      if(v.reason) lastReason = v.reason;
     }
   }
   if(checkingEl) checkingEl.remove();
-  setScanStatus("");
-  if(manual && !connected) toast("Cloud relay couldn't reach a saved TV — TV awake? Reachable from the internet? Key correct?", "bad");
+  setScanStatus(lastReason);
+  setTimeout(()=> setScanStatus(""), 8000);
+  if(manual && !connected) toast(lastReason ? `Cloud relay: ${lastReason}` : "Cloud relay couldn't reach a saved TV — TV awake? Reachable from the internet? Key correct?", "bad");
   updateUI();
   }finally{
     state._cloudBusy = false;
