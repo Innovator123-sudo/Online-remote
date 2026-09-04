@@ -71,16 +71,31 @@
         <button class="btn primary" id="scanBtn">🔍 Scan for my TV</button>
         <div><small id="bridgeHint" style="opacity:.7"></small></div>
         <div class="manual-row">
-          <input id="manualIp" type="text" inputmode="url" placeholder="TV address (same Wi-Fi): 192.168.1.84">
+          <input id="manualIp" type="text" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="TV address (same Wi-Fi): 192.168.1.84">
           <button class="btn small" id="addManualBtn">Connect</button>
         </div>
         <div><small id="scanStatus" style="opacity:.8"></small></div>
+        <div class="helper-box hidden" id="helperBox">
+          <p><strong>📲 Home TV detected — 2-min setup</strong> <small>Vercel can't reach 192.168.x.x from the internet. Run the tiny helper on your home network, then come back here (same Wi-Fi) and tap Scan.</small></p>
+          <ol class="helper-steps">
+            <li>Install <strong>Termux</strong> on your Android phone (same Wi-Fi as the TV).</li>
+            <li>Paste this in Termux, tap Enter:</li>
+          </ol>
+          <div class="code-row">
+            <code id="helperCmd">curl -sL https://raw.githubusercontent.com/Innovator123-sudo/Online-remote/main/termux-setup.sh -o setup.sh &amp;&amp; sh setup.sh</code>
+            <button class="btn small" id="copyHelperBtn">Copy</button>
+          </div>
+          <div class="helper-actions">
+            <button class="btn small primary" id="helperRetryBtn">I've started it — Check again</button>
+            <small id="helperStatus" style="opacity:.8"></small>
+          </div>
+          <p><small>Or on a home PC: <code>node helper.js</code>, then open <code>http://&lt;that-PC-IP&gt;:5000</code> on your phone. Relay key not needed for home Wi-Fi.</small></p>
+        </div>
         <div class="pair-box">
-          <p><strong>Approve with TV PIN</strong> <small>(Type the TV address, tap Pair, read the PIN on the TV, type it, tap Pair again. One approval, then it remembers.)</small></p>
+          <p><strong>Approve with TV PIN</strong> <small>(1: type the TV's Wi-Fi address, tap Pair — the PIN pops up on the TV. 2: type that PIN here, tap Pair again. One approval, then it remembers.)</small></p>
           <div class="pair-row">
-            <input id="pairHost" type="text" inputmode="url" placeholder="TV host">
-            <input id="pairPort" type="text" inputmode="numeric" placeholder="Port">
-            <input id="pairCode" type="text" inputmode="numeric" placeholder="6-digit code">
+            <input id="pairHost" type="text" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="TV address: 192.168.1.84" title="TV address — e.g. 192.168.1.84" aria-label="TV address">
+            <input id="pairCode" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" maxlength="6" placeholder="6-digit PIN" title="6-digit PIN shown on the TV" aria-label="6-digit PIN on TV">
             <button class="btn small primary" id="pairBtn">Pair</button>
           </div>
         </div>

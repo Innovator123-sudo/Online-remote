@@ -376,6 +376,26 @@ function updateUI(){
     : isPublicPage()
     ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). For same-Wi-Fi auto-scan, run the tiny helper on this phone (Termux) or a home PC, then Scan.`
     : `Helper not found. Run <code>node helper.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan (auto-connects).`;
+  // The helper setup box was permanently hidden (class="hidden", no JS ever
+  // removed it) — so users on a public deploy with a 192.168.x.x TV were told
+  // to "run the helper" with no copy-paste command visible (screenshot bug).
+  // Show it whenever we're disconnected without a helper; hide once connected
+  // or the helper is found.
+  try{
+    const hb = $("#helperBox");
+    if(hb) hb.classList.toggle("hidden", !(!c && !state.bridge));
+    // Prefill the pair host from the saved/manual TV so the user never has to
+    // retype the IP into the wrong box (screenshot showed the IP pasted into
+    // the 6-digit code field).
+    const ph = $("#pairHost");
+    if(ph && !ph.value){
+      let saved = null;
+      try{ saved = localStorage.getItem("savedTvIp") || null; }catch{}
+      const manual = ($("#manualIp") || {}).value || "";
+      const src = manual.trim() || saved || (state.tvs[0] && state.tvs[0].ip) || "";
+      if(src) ph.value = parseTarget(src).host || src;
+    }
+  }catch{}
   renderTvs();
 }
 
@@ -456,8 +476,16 @@ async function cloudRefresh(manual){
   const cloudable = cands.filter(c=>{ const t = parseTarget(c.ip); return t.host && !isLanIpv4(t.host); });
   if(!cloudable.length){
     if(manual) toast("Saved TV is a home IP — run the tiny helper (Termux / home PC), then Scan.", "warn");
-    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Run the helper, then Scan.");
-    setTimeout(()=> setScanStatus(""), 6000);
+    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Run the helper below, then Scan.");
+    try{
+      const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
+      const ph = $("#pairHost");
+      if(ph && !ph.value && cands[0]) ph.value = parseTarget(cands[0].ip).host || "";
+      const hs = $("#helperStatus");
+      if(hs) hs.textContent = "Paste the command in Termux (same Wi-Fi), then tap “I've started it”.";
+    }catch{}
+    updateUI();
+    setTimeout(()=> setScanStatus(""), 9000);
     return;
   }
   const checkingEl = manual ? toast("Checking saved TV through the cloud relay…") : null;
@@ -487,9 +515,41 @@ $("#addManualBtn").onclick = async ()=>{
   const t = parseTarget(raw);
   if(!t.host || !/[.:]/.test(t.host) || /\s/.test(t.host)){ toast("Type a TV address — public IP, name.ddns.net, or 192.168.1.84", "bad"); return; }
   addTv({name:"Manual TV", ip:raw});
+  try{ const ph = $("#pairHost"); if(ph) ph.value = t.host; }catch{}
   $("#manualIp").value = "";
   const tv = state.tvs.find(x=> x.ip === raw);
   if(tv) pairConnect(tv);
+};
+// Helper setup box: previously dead buttons (no handlers) + permanently hidden.
+// Wire Copy (Termux command) and "Check again" (re-probe helper, then scan).
+const copyHelperBtn = $("#copyHelperBtn");
+if(copyHelperBtn) copyHelperBtn.onclick = async ()=>{
+  const cmd = (($("#helperCmd") || {}).textContent || "").trim();
+  if(!cmd) return;
+  try{ await navigator.clipboard.writeText(cmd); toast("Helper command copied — paste it in Termux", "good"); }
+  catch{
+    try{
+      const r = document.createRange(); r.selectNodeContents($("#helperCmd"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      document.execCommand("copy"); sel.removeAllRanges();
+      toast("Helper command copied — paste it in Termux", "good");
+    }catch{ toast("Copy failed — long-press the command to copy", "bad"); }
+  }
+};
+const helperRetryBtn = $("#helperRetryBtn");
+if(helperRetryBtn) helperRetryBtn.onclick = async ()=>{
+  const hs = $("#helperStatus");
+  if(hs) hs.textContent = "Looking for the helper…";
+  await checkBridge();
+  if(state.bridge){
+    if(hs) hs.textContent = "Helper found — scanning…";
+    toast("Helper found — scanning for your TV…", "good");
+    doScan();
+  } else {
+    if(hs) hs.textContent = "Still not found — same Wi-Fi? Termux session still running?";
+    toast("Helper still not found — same Wi-Fi? Termux running?", "bad");
+  }
+  updateUI();
 };
 const rkInput = $("#relayKey");
 if(rkInput) rkInput.value = relayKey || "";
@@ -514,10 +574,28 @@ if(copyKeyBtn) copyKeyBtn.onclick = async ()=>{
   catch{ try{ $("#relayKey").select(); document.execCommand("copy"); toast("Relay key copied", "good"); }catch{ toast("Copy failed — long-press to copy", "bad"); } }
 };
 $("#pairBtn").onclick = async ()=>{
-  const host = (($("#pairHost") || {}).value || "").trim();
-  const port = (($("#pairPort") || {}).value || "").trim();
-  const code = (($("#pairCode") || {}).value || "").trim();
-  if(!host){ toast("Type the TV host (shown on the TV pairing screen)", "bad"); return; }
+  let host = (($("#pairHost") || {}).value || "").trim();
+  // Backward-compat: old UI had a separate port box (now removed). Ignore it
+  // if it still exists in some cached page.
+  const portEl = $("#pairPort");
+  const legacyPort = ((portEl || {}).value || "").trim();
+  let code = (($("#pairCode") || {}).value || "").trim().replace(/\s+/g, "");
+  // Screenshot bug recovery: the TV IP was pasted into the PIN box
+  // (host="TV", PIN="192.168.1.84"). If the PIN box holds an IP/hostname and
+  // the host box doesn't, swap them and ask for the real PIN.
+  if(code && !isLanIpv4(host) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){
+    const asHost = parseTarget(code);
+    if(asHost.host && /[.:]/.test(asHost.host)){
+      host = asHost.host;
+      try{ $("#pairHost").value = host; $("#pairCode").value = ""; }catch{}
+      code = "";
+      toast(`Moved ${host} to the address box — now tap Pair, read the PIN on the TV, type it, tap Pair again`, "warn");
+    }
+  }
+  // Allow "192.168.1.84:6466" typed into one box.
+  if(host) host = parseTarget(legacyPort && /^\d+$/.test(legacyPort) ? `${host}:${legacyPort}` : host).host || host;
+  if(!host || host.toLowerCase() === "tv" || /\s/.test(host) || !/[.:a-zA-Z0-9]/.test(host)){ toast("Type the TV address first — e.g. 192.168.1.84", "bad"); return; }
+  if(code && !/^\d{4,8}$/.test(code)){ toast("That PIN looks wrong — type the 4–8 digits shown on the TV", "bad"); return; }
   // Track 1 — home LAN: real TV-protocol pairing. First tap asks the TV to
   // show its PIN; second tap (with PIN typed) completes pairing. No dev mode.
   if(isLanIpv4(host) && state.bridge){
@@ -557,7 +635,18 @@ $("#pairBtn").onclick = async ()=>{
     return;
   }
   // No cloud/ADB pairing — same-Wi-Fi TV remote only.
-  toast("Same-Wi-Fi pairing only — put the TV address in the host box (e.g. 192.168.1.84)", "bad");
+  if(isLanIpv4(host) && !state.bridge){
+    try{
+      const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
+      const hs = $("#helperStatus");
+      if(hs) hs.textContent = "Start the helper first — then Pair.";
+    }catch{}
+    updateUI();
+    toast("Start the tiny helper below first (Termux / home PC) — then Pair", "warn");
+    checkBridge();
+    return;
+  }
+  toast("Same-Wi-Fi pairing only — put the TV address in the first box (e.g. 192.168.1.84)", "bad");
 };
 $("#searchToggle").onchange = e=>{
   state.searchActive = e.target.checked;
