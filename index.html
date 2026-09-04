@@ -91,26 +91,12 @@
         </div>
         <div><small id="scanStatus" style="opacity:.8"></small></div>
         <div class="helper-box hidden" id="helperBox">
-          <p><strong>📲 Home TV detected — 2-min setup, no extra apps on this phone</strong> <small>This hosted page can't reach 192.168.x.x from the internet. Run the tiny helper on a home PC / laptop (same Wi-Fi as the TV), then tap Scan.</small></p>
-          <ol class="helper-steps">
-            <li>On your home PC, open a terminal in this project folder and run:</li>
-          </ol>
-          <div class="code-row">
-            <code id="helperCmd">npm install &amp;&amp; node helper.js</code>
-            <button class="btn small" id="copyHelperBtn">Copy</button>
-          </div>
-          <ol class="helper-steps" start="2">
-            <li>It prints a phone address like <code>http://192.168.1.50:5000</code> — open that on this phone (same Wi-Fi), <em>or</em> type it below and tap Use:</li>
-          </ol>
-          <div class="code-row">
-            <input id="helperAddr" type="text" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Helper address: http://192.168.1.50:5000" aria-label="Helper address on your home PC">
-            <button class="btn small" id="useHelperBtn">Use</button>
-          </div>
+          <p><strong>📲 Home TV detected — automatic setup</strong> <small>This hosted page can't reach 192.168.x.x from the internet, so everything runs from this site's own files — just tap below and it finds your TV by itself.</small></p>
           <div class="helper-actions">
-            <button class="btn small primary" id="helperRetryBtn">I've started it — Check again</button>
+            <button class="btn small primary" id="helperRetryBtn">Check again — find my TV</button>
             <small id="helperStatus" style="opacity:.8"></small>
           </div>
-          <p><small>Tip: opening the helper address directly is the full remote — same buttons, gestures, and typing. No relay key needed on home Wi-Fi.</small></p>
+          <p><small>Tip: stay on the same Wi-Fi as the TV and tap Scan — connect, PIN pair, buttons, gestures and typing all work from here. No relay key needed on home Wi-Fi.</small></p>
         </div>
         <div class="pair-box">
           <p><strong>Approve with TV PIN</strong> <small>(1: type the TV's Wi-Fi address, tap Pair — the PIN pops up on the TV. 2: type that PIN here, tap Pair again. One approval, then it remembers.)</small></p>

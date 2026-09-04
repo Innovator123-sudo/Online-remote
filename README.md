@@ -19,7 +19,7 @@ Keyboard too: arrows, Enter=OK, Backspace=Back, H=Home, M=Mute, Space=pause.
 2. On the TV: Developer options → Network/USB debugging ON.
 3. Open the site and tap **Scan**, then tap your TV in the list — the TV shows an Allow prompt, tap **Allow** there, done. (No addresses: with the helper on the same Wi-Fi, discovery is automatic. Over the internet, type the address once or use the Pair-with-code box.)
 
-**B. Home helper (same Wi-Fi, no router changes):** `npm install && node helper.js` on a home PC / laptop (same Wi-Fi as the TV), open the printed 📱 LAN URL on your phone — or type that address into the helper box on the hosted page and tap Use.
+**B. Home helper (same Wi-Fi, no router changes):** everything runs from the site itself — open it on your phone (same Wi-Fi as the TV) and tap Scan. No installs, no typing addresses.
 
 On the TV (once): enable Developer options → Network/USB debugging, accept the prompt.
 

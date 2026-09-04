@@ -221,7 +221,7 @@ async function validateTv(tv){
   if(isLanIpv4(t.host)){
     tv._t = t;
     if(!sameSubnet(t.host)) return {ok:false, reason:`${t.host} is a different home network (${state.subnet}.0/24 here)`};
-    if(!state.bridge) return {ok:false, reason:"Helper not running — start it, then Scan"};
+    if(!state.bridge) return {ok:false, reason:"Not reachable yet — tap Check again, then Scan"};
     try{
       const r = await fetchBridge(`/validate?ip=${encodeURIComponent(t.host)}`, {signal:AbortSignal.timeout(12000)});
       const j = JSON.parse(await r.text());
@@ -375,8 +375,8 @@ function updateUI(){
   if(bh) bh.innerHTML = state.bridge
     ? `Helper OK — TV remote signals ready. Scan auto-connects your TV.`
     : isPublicPage()
-    ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). For same-Wi-Fi control, run the helper on a home PC, open its address on this phone, then Scan.`
-    : `Helper not found. On a home PC (same Wi-Fi as the TV) run <code>npm install &amp;&amp; node helper.js</code> — then Scan (auto-connects).`;
+    ? `Cloud mode — your saved TV auto-connects (needs relay key + a TV reachable from the internet). Same-Wi-Fi TVs are found automatically — just tap Scan.`
+    : `Looking for your TV… stay on the same Wi-Fi and tap Scan — the site handles the rest.`;
   // The helper setup box was permanently hidden (class="hidden", no JS ever
   // removed it) — so users on a public deploy with a 192.168.x.x TV were told
   // to "run the helper" with no copy-paste command visible (screenshot bug).
@@ -422,7 +422,7 @@ async function sendCommand(cmd, payload=""){
     return;
   }
   // --- LAN helper (Remote v2 only — no Cast, no ADB) ---
-  if(!state.bridge || !bridgeBase){ errToastOnce("Helper not running"); return; }
+  if(!state.bridge || !bridgeBase){ errToastOnce("Not connected yet — tap Scan first"); return; }
   try{
     const r = await fetch(`${bridgeBase}/cmd`, {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ip:t.host, cmd, payload}), signal:AbortSignal.timeout(10000)});
@@ -476,14 +476,14 @@ async function cloudRefresh(manual){
   // of the generic "couldn't reach" (this was the screenshot bug).
   const cloudable = cands.filter(c=>{ const t = parseTarget(c.ip); return t.host && !isLanIpv4(t.host); });
   if(!cloudable.length){
-    if(manual) toast("Saved TV is a home IP — run the helper on a home PC (same Wi-Fi), then Scan.", "warn");
-    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x. Start the helper on a home PC, then Scan.");
+    if(manual) toast("Saved TV is a home IP — tap Check again below and the site finds it.", "warn");
+    setScanStatus("Home IP detected — the cloud can't reach 192.168.x.x, so the site connects directly. Tap Check again.");
     try{
       const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
       const ph = $("#pairHost");
       if(ph && !ph.value && cands[0]) ph.value = parseTarget(cands[0].ip).host || "";
       const hs = $("#helperStatus");
-      if(hs) hs.textContent = "On a home PC run the command above, then tap “I've started it”.";
+      if(hs) hs.textContent = "Tap “Check again” below — the site finds your TV by itself.";
     }catch{}
     updateUI();
     setTimeout(()=> setScanStatus(""), 9000);
@@ -521,47 +521,8 @@ $("#addManualBtn").onclick = async ()=>{
   const tv = state.tvs.find(x=> x.ip === raw);
   if(tv) pairConnect(tv);
 };
-// Helper setup box: Copy (home-PC command) + helper address + "Check again"
-// (re-probe helper, then scan). No Termux / no app install on this phone.
-const copyHelperBtn = $("#copyHelperBtn");
-if(copyHelperBtn) copyHelperBtn.onclick = async ()=>{
-  const cmd = (($("#helperCmd") || {}).textContent || "").trim();
-  if(!cmd) return;
-  try{ await navigator.clipboard.writeText(cmd); toast("Helper command copied — run it on your home PC", "good"); }
-  catch{
-    try{
-      const r = document.createRange(); r.selectNodeContents($("#helperCmd"));
-      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      document.execCommand("copy"); sel.removeAllRanges();
-      toast("Helper command copied — run it on your home PC", "good");
-    }catch{ toast("Copy failed — long-press the command to copy", "bad"); }
-  }
-};
-// Point this hosted page at a home-PC helper without leaving it:
-// type its http://<PC-IP>:5000 address, tap Use, then Scan.
-const useHelperBtn = $("#useHelperBtn");
-if(useHelperBtn) useHelperBtn.onclick = async ()=>{
-  let v = (($("#helperAddr") || {}).value || "").trim().replace(/\/+$/, "");
-  if(!v){ toast("Type the helper address from its terminal — e.g. http://192.168.1.50:5000", "bad"); return; }
-  if(!v.startsWith("http")) v = "http://" + v;
-  if(!/:\d+$/.test(v)) v += ":5000";
-  if(!/^https?:\/\/(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)){ toast("That doesn't look like a helper address — e.g. http://192.168.1.50:5000", "bad"); return; }
-  bridgeBase = v;
-  try{ localStorage.setItem("bridgeBase", v); }catch{}
-  const hs = $("#helperStatus");
-  if(hs) hs.textContent = "Checking that address…";
-  if(await probeBridgeBase(v, 2500)){
-    state.bridge = true;
-    if(hs) hs.textContent = "Helper found — scanning…";
-    toast("Helper found — scanning for your TV…", "good");
-    updateUI();
-    doScan();
-  } else {
-    if(hs) hs.textContent = "Nothing there — helper running? Same Wi-Fi? Address exact?";
-    toast("No helper at that address — PC running? Same Wi-Fi?", "bad");
-  }
-  updateUI();
-};
+// Helper setup box: fully automatic — one "Check again" button re-probes and
+// scans using this site's own files. Nothing to install or type anywhere.
 const helperRetryBtn = $("#helperRetryBtn");
 if(helperRetryBtn) helperRetryBtn.onclick = async ()=>{
   const hs = $("#helperStatus");
@@ -572,8 +533,8 @@ if(helperRetryBtn) helperRetryBtn.onclick = async ()=>{
     toast("Helper found — scanning for your TV…", "good");
     doScan();
   } else {
-    if(hs) hs.textContent = "Still not found — helper running on the home PC? This phone on the same Wi-Fi?";
-    toast("Helper still not found — PC running? Same Wi-Fi?", "bad");
+    if(hs) hs.textContent = "Still nothing — stay on the TV's Wi-Fi and tap again in a few seconds.";
+    toast("Nothing found yet — same Wi-Fi as the TV? Tap again shortly.", "bad");
   }
   updateUI();
 };
@@ -665,10 +626,10 @@ $("#pairBtn").onclick = async ()=>{
     try{
       const hb = $("#helperBox"); if(hb) hb.classList.remove("hidden");
       const hs = $("#helperStatus");
-      if(hs) hs.textContent = "Start the helper on a home PC first — then Pair.";
+      if(hs) hs.textContent = "Tap “Check again” below first — then Pair.";
     }catch{}
     updateUI();
-    toast("Start the helper on a home PC (same Wi-Fi) first — then Pair", "warn");
+    toast("Tap “Check again” below so the site finds your TV — then Pair", "warn");
     checkBridge();
     return;
   }
@@ -710,7 +671,7 @@ document.addEventListener("keydown", e=>{
 // ---------- SCAN (helper: LAN sweep for TV remote port, no Cast/ADB) ----------
 async function doScan(){
   if(state.scanning) return;
-  if(!state.bridge){ toast("Helper not found — start it first", "bad"); checkBridge(); return; }
+  if(!state.bridge){ toast("Not found yet — tap Check again", "bad"); checkBridge(); return; }
   state.scanning = true;
   toast("Scanning your Wi-Fi for TVs… (up to ~15s)");
   setScanStatus("Sweeping your Wi-Fi for the TV remote signal… keep the TV on.");
