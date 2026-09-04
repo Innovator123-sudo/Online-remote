@@ -7,10 +7,18 @@
   },
   "scripts": {
     "start": "node helper.js",
-    "helper": "node helper.js"
+    "helper": "node helper.js",
+    "cloud-server": "node facilities/remote-cloud-server.js",
+    "cloud-bridge": "node facilities/remote-bridge.js",
+    "docker:build": "docker build -t tv-remote facilities/",
+    "docker:cloud": "docker-compose -f facilities/docker-compose.cloud.yml up",
+    "docker:bridge": "docker-compose -f facilities/docker-compose.cloud.yml up bridge-agent",
+    "docker:server": "docker-compose -f facilities/docker-compose.cloud.yml up cloud-server"
   },
   "license": "MIT",
   "dependencies": {
-    "androidtv-remote": "^1.0.10"
+    "androidtv-remote": "^1.0.10",
+    "express": "^5.2.1",
+    "ws": "^8.21.3"
   }
 }

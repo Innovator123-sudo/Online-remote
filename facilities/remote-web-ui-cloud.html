@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Android TV Remote - Cloud</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px;color:#fff}
+.title{font-size:1.8rem;margin-bottom:10px}
+.subtitle{font-size:0.9rem;color:#888;margin-bottom:20px}
+.status{font-size:0.9rem;margin:0 0 20px;padding:8px 16px;border-radius:20px;background:rgba(255,255,255,0.1)}
+.status.ok{background:rgba(76,175,80,0.3);border:1px solid #4CAF50}
+.status.error{background:rgba(244,67,54,0.3);border:1px solid #F44336}
+.btn{background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;padding:12px 24px;border-radius:10px;cursor:pointer;font-size:1rem;margin-bottom:20px}
+.btn:hover{transform:scale(1.05)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.tv-list{width:100%;max-width:400px;margin-bottom:20px}
+.tv-option{padding:12px 16px;background:rgba(255,255,255,0.1);margin:5px;border-radius:10px;cursor:pointer;display:inline-block}
+.tv-option:hover{background:rgba(255,255,255,0.2)}
+.tv-option.selected{border:2px solid #4CAF50;background:rgba(76,175,80,0.3)}
+.d-pad{display:grid;grid-template-columns:repeat(3,80px);grid-template-rows:repeat(4,70px);gap:8px;margin:20px 0}
+.remote-btn{width:80px;height:70px;border:none;border-radius:15px;font-size:1.5rem;cursor:pointer;background:rgba(255,255,255,0.15);color:#fff}
+.remote-btn:hover{background:rgba(255,255,255,0.25);transform:scale(1.05)}
+.btn-center{grid-column:2;grid-row:2;background:linear-gradient(135deg,#667eea,#764ba2);font-size:1rem;font-weight:bold}
+.fav-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:10px 0}
+.fav-btn{padding:10px 15px;background:rgba(255,255,255,0.1);border:2px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;font-size:.9rem}
+.fav-btn:hover{background:rgba(255,255,255,0.2)}
+.info{background:rgba(255,255,255,0.05);padding:15px;border-radius:10px;font-size:.85rem;line-height:1.6;max-width:400px;margin-top:20px}
+.connection-status{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.connection-dot{width:12px;height:12px;border-radius:50%;background:#F44336}
+.connection-dot.connected{background:#4CAF50}
+.config-panel{background:rgba(255,255,255,0.1);padding:20px;border-radius:10px;margin-bottom:20px;max-width:400px;width:100%}
+.config-panel input{width:100%;padding:10px;margin:5px 0;border-radius:5px;border:none;background:rgba(255,255,255,0.2);color:#fff}
+</style>
+</head>
+<body>
+<h1 class="title">Android TV Remote</h1>
+<p class="subtitle">Cloud-Based • No Local Server Required</p>
+<div class="config-panel" id="configPanel">
+  <div class="connection-status">
+    <div class="connection-dot" id="connectionDot"></div>
+    <span id="connectionStatus">Enter cloud server URL to connect</span>
+  </div>
+  <input type="text" id="cloudServerUrl" placeholder="wss://your-cloud-server.com:5000" value="">
+  <button class="btn" onclick="connectToCloud()" style="width:100%;margin:0">Connect to Cloud</button>
+</div>
+<div id="status" class="status">Waiting for connection...</div>
+<button id="discoverBtn" class="btn" onclick="discoverTv()">Discover TVs</button>
+<div id="tvList" class="tv-list"></div>
+
+<div class="d-pad">
+  <div style="width:80px;height:70px"></div>
+  <button class="remote-btn" onclick="sendKey(19)">⬆️</button>
+  <div style="width:80px;height:70px"></div>
+  <button class="remote-btn" onclick="sendKey(21)">⬅️</button>
+  <button class="remote-btn btn-center" onclick="sendKey(23)">OK</button>
+  <button class="remote-btn" onclick="sendKey(22)">➡️</button>
+  <div style="width:80px;height:70px"></div>
+  <button class="remote-btn" onclick="sendKey(20)">⬇️</button>
+  <div style="width:80px;height:70px"></div>
+</div>
+<div class="fav-row">
+  <button class="fav-btn" onclick="sendKey(3)">🏠 Home</button>
+  <button class="fav-btn" onclick="sendKey(4)">⬅️ Back</button>
+  <button class="fav-btn" onclick="sendKey(82)">☰ Menu</button>
+</div>
+<div class="fav-row">
+  <button class="fav-btn" onclick="sendKey(24)">🔊 Vol+</button>
+  <button class="fav-btn" onclick="sendKey(25)">🔉 Vol-</button>
+  <button class="fav-btn" onclick="sendKey(164)">🔇 Mute</button>
+</div>
+<div class="info">
+<strong>Setup:</strong> Deploy cloud server to Railway/Render<br>Run bridge agent on home network (Docker)<br>Connect browser to cloud server<br><br>
+<strong>Status:</strong> <span id="modeDisplay">Disconnected</span>
+</div>
+<script>
+let cloudWs = null;
+let currentTvIp = null;
+let userId = 'user-' + Math.random().toString(36).substr(2, 9);
+let cloudServerUrl = '';
+
+const savedUrl = localStorage.getItem('cloudServerUrl');
+if(savedUrl) {
+  document.getElementById('cloudServerUrl').value = savedUrl;
+  cloudServerUrl = savedUrl;
+  connectToCloud();
+}
+
+function setConnectionStatus(status, connected) {
+  const dot = document.getElementById('connectionDot');
+  const text = document.getElementById('connectionStatus');
+  const configPanel = document.getElementById('configPanel');
+  
+  dot.className = 'connection-dot';
+  if(connected === true) {
+    dot.classList.add('connected');
+    text.textContent = 'Connected to cloud relay';
+    configPanel.style.display = 'none';
+  } else if(connected === false) {
+    text.textContent = status;
+    configPanel.style.display = 'block';
+  } else {
+    dot.classList.add('connecting');
+    text.textContent = status;
+  }
+}
+
+function connectToCloud() {
+  cloudServerUrl = document.getElementById('cloudServerUrl').value.trim();
+  if(!cloudServerUrl) {
+    setConnectionStatus('Please enter a cloud server URL', false);
+    return;
+  }
+  localStorage.setItem('cloudServerUrl', cloudServerUrl);
+  setConnectionStatus('Connecting to cloud...', false);
+  try {
+    cloudWs = new WebSocket(cloudServerUrl);
+    cloudWs.onopen = function() {
+      cloudWs.send(JSON.stringify({type: 'ui:connect', userId: userId}));
+    };
+    cloudWs.onmessage = function(event) {
+      try {
+        const msg = JSON.parse(event.data);
+        handleCloudMessage(msg);
+      } catch(err) {
+        console.error('Invalid message:', err);
+      }
+    };
+    cloudWs.onclose = function() {
+      setConnectionStatus('Connection lost. Reconnecting...', null);
+      setTimeout(connectToCloud, 3000);
+    };
+    cloudWs.onerror = function(error) {
+      console.error('WebSocket error:', error);
+      setConnectionStatus('Connection error. Check server URL.', false);
+    };
+  } catch(err) {
+    setConnectionStatus('Failed to connect: ' + err.message, false);
+  }
+}
+
+function handleCloudMessage(msg) {
+  switch(msg.type) {
+    case 'ui:connected':
+      setConnectionStatus('Connected!', true);
+      if(msg.tvs && msg.tvs.length > 0) showTvList(msg.tvs);
+      break;
+    case 'tv:discovered':
+      showTvList([msg.tv]);
+      break;
+    case 'control:success':
+      showStatus('Command sent', 'ok');
+      break;
+    case 'control:error':
+      showStatus('Error: ' + msg.message, 'error');
+      break;
+    case 'error':
+      showStatus('Error: ' + msg.message, 'error');
+      break;
+  }
+}
+
+function discoverTv() {
+  if(!cloudWs || cloudWs.readyState !== WebSocket.OPEN) {
+    showStatus('Not connected to cloud', 'error');
+    return;
+  }
+  const btn = document.getElementById('discoverBtn');
+  if(btn) { btn.disabled = true; btn.textContent = 'Finding...'; }
+  showStatus('Searching for TVs via cloud...');
+  cloudWs.send(JSON.stringify({type: 'ui:discover', userId: userId}));
+}
+
+function showTvList(tvs) {
+  const container = document.getElementById('tvList');
+  container.innerHTML = '<h3 style="margin:20px 0 10px 0;font-size:1rem;">Select TV:</h3>';
+  tvs.forEach(function(tv) {
+    const div = document.createElement('div');
+    div.className = 'tv-option' + (tv.ip === currentTvIp ? ' selected' : '');
+    div.innerHTML = '<strong>' + (tv.name || 'Android TV') + '</strong><br><span>' + tv.ip + '</span>';
+    div.onclick = function() { selectTv(tv.ip); };
+    container.appendChild(div);
+  });
+}
+
+function selectTv(ip) {
+  if(ip === currentTvIp) return;
+  currentTvIp = ip;
+  showStatus('Selected: ' + ip, 'ok');
+  showTvList([{ip: ip, name: 'Android TV'}]);
+}
+
+function sendKey(keyCode) {
+  if(!currentTvIp) {
+    showStatus('Select a TV first', 'error');
+    return;
+  }
+  if(!cloudWs || cloudWs.readyState !== WebSocket.OPEN) {
+    showStatus('Not connected to cloud', 'error');
+    return;
+  }
+  cloudWs.send(JSON.stringify({type: 'ui:control', tvIp: currentTvIp, command: {keyCode: keyCode}, userId: userId}));
+  showStatus('Sent key: ' + keyCode);
+}
+
+function showStatus(msg, type) {
+  const s = document.getElementById('status');
+  s.textContent = msg;
+  s.className = 'status' + (type ? ' ' + type : '');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  if(cloudServerUrl) connectToCloud();
+});
+</script>
+</body>
+</html>

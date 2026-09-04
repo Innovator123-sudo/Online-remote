@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  android-tv-remote:
+    build: .
+    container_name: android-tv-remote
+    ports:
+      - "5001:5001"
+      - "57300:57300/udp"
+    environment:
+      - NODE_ENV=production
+      - REMOTE_HOST=0.0.0.0
+      - REMOTE_PORT=5001
+    networks:
+      - tv-network
+    restart: unless-stopped
+
+networks:
+  tv-network:
+    driver: bridge

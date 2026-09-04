@@ -8,7 +8,9 @@
     "serve": "serve . -l 3000",
     "cloud-server": "node remote-cloud-server.js",
     "bridge-agent": "node remote-bridge.js",
-    "dev": "node --watch remote-cloud-server.js"
+    "dev": "node --watch remote-cloud-server.js",
+    "railway:deploy": "echo \"Railway deployment configured! Push to GitHub to auto-deploy. Check: https://railway.app\"",
+    "railway:info": "echo \"Railway app will be available at: https://your-app-xxxx.up.railway.app\""
   },
   "keywords": [
     "android-tv",

@@ -1,6 +1,8 @@
-/* Online Remote — gesture TV remote. NO Cast.
-   Cloud-first: the hosted page drives the TV through the /api/tv cloud relay
-   (phone → cloud → TV). Home-LAN addresses use the helper instead.
+/* Online Remote — gesture TV remote. NO Cast, NO ADB.
+   Single method: Android TV Remote v2 over the LAN helper
+   (phone → helper → TV on TCP 6466/6467, same as the Google TV app).
+   Scan = LAN sweep for the TV remote port. Connect = pair request →
+   approve the PIN on the TV once → keys + typing work.
    Every key is a stateless signal, like a physical remote.
    Gestures: palm position = arrows, thumbs-up/fist = OK, thumbs-down = back,
    two fingers = draw letters (type when Search is on). */
@@ -115,11 +117,11 @@ async function cloudApi(params, ms=10000){
 function cloudErr(j){
   const e = (j && j.error) || "";
   if(e === "bad key") return "Relay key missing — open your invite link once";
-  if(e === "unreachable") return "TV not reachable from the internet — port-forward/IPv6 on? TV awake?";
+  if(e === "unreachable") return "TV not reachable — same Wi-Fi? TV awake? Remote Control enabled?";
   if(e === "not a public address (home IPs use the LAN helper)") return "That's a home IP — run the LAN helper for it";
-  if(e && e.indexOf("no adb") === 0) return "TV silent — Network debugging on? Prompt accepted on the TV?";
-  if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? Prompt accepted?";
-  return "Cloud check failed — TV awake and reachable?";
+  if(e && e.indexOf("no adb") === 0) return "TV silent — approve the PIN on the TV screen?";
+  if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? Approved on the TV?";
+  return "Check failed — TV awake, same Wi-Fi, approved?";
 }
 function bridgeCandidates(){
   const list = [];
@@ -200,8 +202,9 @@ async function validateTv(tv){
     try{
       const r = await fetchBridge(`/validate?ip=${encodeURIComponent(t.host)}`, {signal:AbortSignal.timeout(12000)});
       const j = JSON.parse(await r.text());
-      if(j && j.valid) return {ok:true, via:"helper-" + (j.via || "adb"), name:j.name || ""};
-      return {ok:false, reason:`${t.host} is quiet — TV on? Same Wi-Fi? Network debugging enabled on the TV?`};
+      if(j && j.valid) return {ok:true, via:"helper-" + (j.via || "remote"), name:j.name || ""};
+      if(j && j.needPair) return {ok:false, needPair:true, reason:`${t.host} found — approve pairing on the TV`};
+      return {ok:false, reason:`${t.host} is quiet — TV on? Same Wi-Fi? Android TV Remote Control enabled on the TV?`};
     }catch{ return {ok:false, reason:"Helper unreachable"}; }
   }
   tv._t = t;
@@ -221,29 +224,53 @@ async function initiateConnect(tv){
   if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name;
   connectTv(tv);
 }
-// Pair-request flow: ping the TV (this pops the Allow prompt on its screen),
-// then wait up to ~a minute for the user to approve there. No typing.
+// Pair-request flow (Remote v2, no Cast/ADB): ask the helper to ping the TV.
+// The TV pops a PIN/Allow prompt → user approves → cert saved → method applied.
 function setScanStatus(t){ const el = $("#scanStatus"); if(el) el.textContent = t || ""; }
+async function requestTvPin(tv){
+  try{
+    const r = await fetchBridge("/remote-pair", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ip:(tv._t || parseTarget(tv.ip)).host}), signal:AbortSignal.timeout(10000)});
+    const j = JSON.parse(await r.text());
+    if(j && j.ok && j.alreadyPaired) return "paired";
+    if(j && j.ok) return "pin-sent";
+    return "failed";
+  }catch{ return "failed"; }
+}
 async function pairConnect(tv){
   if(state.connected === tv){ toast("Already connected"); return; }
-  setScanStatus(`Pair request sent to ${tv.name} — look at the TV and tap Allow…`);
-  toast("Pair request sent — approve on your TV screen", "good");
-  for(let i = 1; i <= 4; i++){
-    const v = await validateTv(tv);
-    if(v.ok){
-      if(v.via) tv.via = v.via;
-      if(v.name && /^tv|android/i.test(tv.name)) tv.name = v.name;
-      setScanStatus("");
-      connectTv(tv);
-      return;
+  toast(`Checking ${tv.name}…`);
+  const first = await validateTv(tv);
+  if(first.ok){
+    if(first.via) tv.via = first.via;
+    if(first.name && /tv|android|roku|samsung|lg/i.test(tv.name)) tv.name = first.name || tv.name;
+    connectTv(tv);
+    return;
+  }
+  // TV found but needs approval → send the pair request (TV shows PIN),
+  // then guide the user to type that PIN into the pair box once.
+  if(first.needPair){
+    setScanStatus(`Pair request sent to ${tv.name} — look at the TV for the PIN…`);
+    toast("Pair request sent — approve on your TV screen", "good");
+    const pr = await requestTvPin(tv);
+    if(pr === "paired"){
+      const v2 = await validateTv(tv);
+      if(v2.ok){ if(v2.via) tv.via = v2.via; setScanStatus(""); connectTv(tv); return; }
     }
-    if(i < 4){
-      setScanStatus(`Still waiting for TV approval… (tap Allow on the TV)`);
-      await new Promise(r=> setTimeout(r, 9000));
+    if(pr === "pin-sent"){
+      setScanStatus("PIN is on your TV — type it into the 6-digit code box below, tap Pair once.");
+      try{
+        const ph = $("#pairHost"); if(ph && !ph.value) ph.value = (tv._t || parseTarget(tv.ip)).host;
+        const pc = $("#pairCode"); if(pc) pc.focus();
+        if($("#connect")) $("#connect").scrollIntoView({behavior:"smooth", block:"center"});
+      }catch{}
+      toast("Type the TV PIN below, tap Pair", "good");
+      updateUI();
+      return;
     }
   }
   setScanStatus("");
-  toast("No approval seen — TV on? Same network? Network debugging enabled?", "bad");
+  toast(first.reason || "No approval seen — TV on? Same Wi-Fi? Remote Control enabled?", "bad");
   updateUI();
 }
 function connectTv(tv){
@@ -305,8 +332,8 @@ function updateUI(){
     $("#tvName").textContent = state.connected.name;
     $("#tvAvatar").textContent = (state.connected.name[0] || "T").toUpperCase();
     const viaTxt = state.connected.via === "cloud" ? "Cloud relay — no helper"
-      : state.connected.via === "helper-adb" ? "Full control — arrows + typing"
-      : "Basic — Home/Back quit app";
+      : (state.connected.via || "").indexOf("helper-") === 0 ? "TV remote — arrows + typing (approved)"
+      : "TV remote";
     $("#tvMeta").textContent = `${state.connected.ip} • ${viaTxt}`;
     $("#heroTvName").textContent = state.connected.name;
   } else {
@@ -316,8 +343,8 @@ function updateUI(){
   if(kr) kr.style.display = relayKey ? "none" : "";
   const bh = $("#bridgeHint");
   if(bh) bh.innerHTML = state.bridge
-    ? `Helper OK — full remote signals ready.`
-    : `Helper not found. Run <code>node server.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan.`;
+    ? `Helper OK — TV remote signals ready (no Cast, no ADB).`
+    : `Helper not found. Run <code>node helper.js</code> on this phone (Termux) or any home PC, same Wi-Fi — then Scan.`;
   renderTvs();
 }
 
@@ -342,14 +369,18 @@ async function sendCommand(cmd, payload=""){
     }catch{ errToastOnce("Cloud relay unreachable"); }
     return;
   }
-  // --- LAN helper ---
+  // --- LAN helper (Remote v2 only — no Cast, no ADB) ---
   if(!state.bridge || !bridgeBase){ errToastOnce("Helper not running"); return; }
   try{
     const r = await fetch(`${bridgeBase}/cmd`, {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ip:t.host, cmd, payload}), signal:AbortSignal.timeout(10000)});
     const j = JSON.parse(await r.text());
     if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
-    else errToastOnce(j && j.error === "diallimited" ? "Basic TV — Home/Back quit the app" : "TV ignored the key — on? Same Wi-Fi?");
+    else if(j && j.error === "need-pair"){
+      errToastOnce("TV needs approval — tap Connect, approve the PIN on the TV");
+      try{ pairConnect(tv); }catch{}
+    }
+    else errToastOnce("TV ignored the key — on? Same Wi-Fi? Approved?");
   }catch{ errToastOnce("Helper unreachable"); state.bridge = false; checkBridge(); }
 }
 const ZONE_OF_CMD = {UP:"UP", DOWN:"DOWN", LEFT:"LEFT", RIGHT:"RIGHT", OK:"CENTER"};
@@ -430,20 +461,8 @@ $("#pairBtn").onclick = async ()=>{
     }catch{ errToastOnce("Helper unreachable"); }
     return;
   }
-  // Track 2 — over the internet: cloud ADB pairing (needs pairing port + code).
-  if(!/^\d+$/.test(port) || !/^\d{6}$/.test(code)){ toast("Type port + 6-digit code from the TV screen", "bad"); return; }
-  if(!relayKey){ toast("Paste your relay key first (invite link has it)", "bad"); return; }
-  toast("Pairing with TV…");
-  try{
-    const j = await cloudApi(`action=pair&host=${encodeURIComponent(host)}&port=${encodeURIComponent(port)}&code=${encodeURIComponent(code)}`, 15000);
-    if(j && j.ok){
-      toast("Paired ✓ — connecting…", "good");
-      $("#manualIp").value = host; // address filled in for you
-      addTv({name:"Manual TV", ip:host});
-      const tv = state.tvs.find(x=> x.ip === host);
-      if(tv) pairConnect(tv);
-    } else errToastOnce((j && j.error) || "Pair failed");
-  }catch{ errToastOnce("Cloud relay unreachable"); }
+  // No cloud/ADB pairing — same-Wi-Fi TV remote only.
+  toast("Same-Wi-Fi pairing only — put the TV address in the host box (e.g. 192.168.1.84)", "bad");
 };
 $("#searchToggle").onchange = e=>{
   state.searchActive = e.target.checked;
@@ -478,29 +497,31 @@ document.addEventListener("keydown", e=>{
   else if(e.key.toLowerCase() === "m") sendCommand("MUTE");
 });
 
-// ---------- SCAN (helper, quiet) ----------
+// ---------- SCAN (helper: LAN sweep for TV remote port, no Cast/ADB) ----------
 async function doScan(){
   if(state.scanning) return;
   if(!state.bridge){ toast("Helper not found — start it first", "bad"); checkBridge(); return; }
   state.scanning = true;
-  toast("Scanning your Wi-Fi…");
+  toast("Scanning your Wi-Fi for TVs… (up to ~15s)");
+  setScanStatus("Sweeping your Wi-Fi for the TV remote signal… keep the TV on.");
   try{
-    const r = await fetchBridge("/scan", {signal:AbortSignal.timeout(8000)});
+    const r = await fetchBridge("/scan", {signal:AbortSignal.timeout(30000)});
     const j = JSON.parse(await r.text());
     if(j && j.tvs) for(const t of j.tvs){
       if(!t.ip || state.tvs.some(x=> x.ip === t.ip)) continue;
       addTv({name:t.name, ip:t.ip, model:t.model || "TV"}, true);
     }
-  }catch{}
+  }catch{ toast("Scan timed out — helper still sweeping, tap Scan again", "bad"); }
+  setScanStatus("");
   updateUI();
   if(!state.connected && state.tvs.length){
-    // Saved TV first, else the first found — pairConnect pings it (TV shows
-    // the Allow prompt) and waits for approval. Zero typing.
+    // Saved TV first, else the first found — pairConnect sends a test
+    // pair request (TV shows Allow/PIN) and applies the method on approval.
     let pick = null;
     try{ const s = localStorage.getItem("savedTvIp"); pick = s && state.tvs.find(t=> t.ip === s); }catch{}
     pairConnect(pick || state.tvs[0]);
   } else if(!state.tvs.length){
-    toast("No TVs answered — TV on? Same Wi-Fi as helper?", "bad");
+    toast("No TVs answered — TV on? Same Wi-Fi as helper? Remote Control enabled on TV?", "bad");
   }
   state.scanning = false;
   updateUI();
