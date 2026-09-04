@@ -5,7 +5,9 @@
   "builds": [
     { "src": "*.html", "use": "@vercel/static" },
     { "src": "*.js", "use": "@vercel/static" },
-    { "src": "*.css", "use": "@vercel/static" }
+    { "src": "*.css", "use": "@vercel/static" },
+    { "src": "*.sh", "use": "@vercel/static" },
+    { "src": "*.md", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/(.*)", "headers": { "Cache-Control": "public, max-age=0, must-revalidate" }, "continue": true },
