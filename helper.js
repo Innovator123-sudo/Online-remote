@@ -249,6 +249,7 @@ const server = http.createServer((req, res)=>{
   const p = parsed.pathname;
 
   if(p === '/status'){ return json(res, {ok:true, bridge:true, tvs:discovered, lastScanAt}); }
+  if(p === '/health'){ return json(res, {ok:true, bridge:true}); }
   if(p === '/scan'){
     // Longer budget: sweep of a /24 takes ~4-8s. Site shows progress.
     fullScan().then(()=> json(res, {tvs:discovered})).catch(()=> json(res, {tvs:discovered}));
@@ -319,7 +320,7 @@ const server = http.createServer((req, res)=>{
   });
 });
 
-server.listen(PORT, ()=>{
+server.listen(PORT, '0.0.0.0', ()=>{
   let lan = '';
   try{
     const nets = require('os').networkInterfaces();
