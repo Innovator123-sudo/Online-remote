@@ -79,10 +79,25 @@ window.addEventListener("load", ()=> setTimeout(()=>{ initCastApi(); if(window._
 function castConnectTap(){
   try{
     if(!castDirect.available || !window.cast || !window.cast.framework) throw new Error("no-cast");
-    window.cast.framework.CastContext.getInstance().requestSession();
+    const ctx = window.cast.framework.CastContext.getInstance();
+    // Silent path: an existing session is adopted with no launch, no dialog.
+    const existing = ctx.getCurrentSession();
+    if(existing){
+      castDirect.session = existing;
+      onCastSession({sessionState: "SESSION_RESUMED"});
+      return;
+    }
+    // A fresh connect must open the Cast channel on the TV (Google's rule —
+    // every Cast remote does this). Ask once per visit so it's never a surprise.
+    if(!window._castLaunchOk){
+      if(!confirm("Connect opens the Cast screen on your TV (this is the remote channel — required by Chromecast). Continue?")) return;
+      window._castLaunchOk = true;
+    }
+    ctx.requestSession();
   }catch{
     toast("Direct Cast needs Chrome on Android + same Wi-Fi as the TV", "bad");
   }
+}
 }
 function sessionName(s){
   try{ const d = s.getCastDevice && s.getCastDevice(); if(d && d.friendlyName) return String(d.friendlyName).slice(0,40); }catch{}
@@ -101,6 +116,10 @@ function onCastSession(e){
       try{ localStorage.setItem("castTvName", name); }catch{}
       updateCastUI();
       toast(`Connected: ${name}`, "good");
+      try{
+        const st = castDirect.player ? castDirect.player.playerState : null;
+        if(!st || st === "IDLE") toast("Remote channel open — volume works now", "good");
+      }catch{}
     } else if(st === "SESSION_ENDED" || st === "SESSION_ENDING"){
       castDirect.session = null;
       if(state.connected){ state.connected = null; updateCastUI(); }
@@ -134,7 +153,7 @@ function updateCastUI(){
     if(!castDirect.available){
       hs.innerHTML = "<strong>⚠️ Direct Cast unavailable here:</strong> open this page in <em>Chrome on Android</em>, joined to your home Wi-Fi.";
     } else if(!c){
-      hs.innerHTML = "<strong>✅ Nothing to set up:</strong> join your <em>home Wi-Fi</em> (mobile data off), tap Connect, pick your TV.";
+      hs.innerHTML = "<strong>✅ Nothing to set up:</strong> join your <em>home Wi-Fi</em> (mobile data off), tap Connect, pick your TV. First connect opens the Cast screen (the remote channel).";
     } else {
       hs.innerHTML = `<strong>✅ Connected to ${state.connected.name}.</strong> Buttons, keys and gestures are live.`;
     }
@@ -208,10 +227,35 @@ async function sendCommand(cmd){
   else if(cmd !== "SEEK_BACK" && cmd !== "SEEK_FWD") errToastOnce("That key did nothing — is media playing?");
 }
 function disconnect(){
-  state.connected = null; // session stays alive for instant reconnect
+  // Release the TV back to whatever it was showing — never trap the Cast screen.
+  try{ if(castDirect.session) castDirect.session.endSession(true); }catch{}
+  castDirect.session = null;
+  state.connected = null;
   updateCastUI();
-  toast("Disconnected");
+  toast("Disconnected — TV released");
 }
+// Auto-release: tab hidden 60s → give the TV back (no permanent Cast screen).
+let _hideTimer = null;
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden){
+    clearTimeout(_hideTimer);
+    _hideTimer = setTimeout(()=>{
+      try{
+        if(castDirect.session){
+          castDirect.session.endSession(true);
+          toast("TV released (tab was hidden)");
+        }
+      }catch{}
+    }, 60000);
+  } else {
+    clearTimeout(_hideTimer);
+    // Silently re-adopt a surviving session — no launch, no dialog.
+    try{
+      const s = window.cast.framework.CastContext.getInstance().getCurrentSession();
+      if(s && !castDirect.session){ castDirect.session = s; onCastSession({sessionState: "SESSION_RESUMED"}); }
+    }catch{}
+  }
+});
 
 // ---------- BUTTONS + KEYBOARD ----------
 $$(".dpad-btn, .qbtn").forEach(b=>{
