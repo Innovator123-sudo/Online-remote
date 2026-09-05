@@ -26,8 +26,15 @@ function lib(){
   return Lib;
 }
 function envCert(){
+  // 1) Explicit env var (preferred).
   try{
     const j = JSON.parse(process.env.REMOTE_CERT_JSON || '');
+    if(j && j.key && j.cert) return {key:j.key, cert:j.cert};
+  }catch{}
+  // 2) Bundled cert deployed with the function (set up once, no dashboard).
+  try{
+    const path = require('path'), fs = require('fs');
+    const j = JSON.parse(fs.readFileSync(path.join(__dirname, 'remote-cert.json'), 'utf8'));
     if(j && j.key && j.cert) return {key:j.key, cert:j.cert};
   }catch{}
   return null;
