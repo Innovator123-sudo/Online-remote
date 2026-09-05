@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "androidtv-remote": "^1.0.10",
-    "selfsigned": "^2.4.1"
+    "selfsigned": "^2.4.1",
+    "ws": "^8.18.0"
   }
 }

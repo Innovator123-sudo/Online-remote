@@ -20,6 +20,107 @@ const path = require('path');
 const url = require('url');
 const remote2 = require('./remote2'); // Android TV Remote v2 (real remote protocol)
 
+// ---------- tiny .env loader (no dependency; .env is gitignored) ----------
+try{
+  const envP = path.join(__dirname, '.env');
+  if(fs.existsSync(envP)){
+    fs.readFileSync(envP, 'utf8').split(/\r?\n/).forEach(line=>{
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+      if(!m || process.env[m[1]] !== undefined) return;
+      let v = m[2];
+      if(v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) v = v.slice(1, -1);
+      process.env[m[1]] = v;
+    });
+  }
+}catch{}
+
+// ---------- cloud bridge (Railway 24/7 <-> home PC) ----------
+// Problem: cloud servers cannot reach 192.168.x.x. Fix: the home PC keeps
+// ONE outbound WebSocket to the cloud instance; the cloud instance forwards
+// LAN-targeted /validate /cmd /remote-* calls through it and returns the
+// replies over plain HTTP. Browser needs no changes (same relative URLs).
+//   cloud instance:  BRIDGE_MODE=cloud  (+ RELAY_KEY)
+//   home PC helper:  CLOUD_SERVER_URL=wss://<host>/bridge  (+ same RELAY_KEY)
+let WS = null;
+try{ WS = require('ws'); }catch{ console.log('[bridge] ws module missing — run `npm install` to enable the cloud link'); }
+const BRIDGE_MODE = String(process.env.BRIDGE_MODE || 'home').toLowerCase();
+const CLOUD_URL = String(process.env.CLOUD_SERVER_URL || '').trim();
+const RELAY_KEY = String(process.env.RELAY_KEY || '').trim();
+const bridge = {home:null, pending:new Map(), seq:0};
+function isLanIp(ip){
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip || '');
+  if(!m || m.slice(1).some(o=> +o < 0 || +o > 255)) return false;
+  const a = +m[1], b = +m[2];
+  return a === 10 || a === 127 || a === 0
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254);
+}
+// Server side: accept the home PC's socket (key-checked), route replies.
+function attachBridge(server){
+  if(!WS) return;
+  const wss = new WS.Server({server, path:'/bridge'});
+  wss.on('connection', (sock, req)=>{
+    const q = url.parse(req.url || '', true).query;
+    if(!RELAY_KEY || q.key !== RELAY_KEY){ try{ sock.close(4401, 'bad key'); }catch{} return; }
+    if(bridge.home){ try{ bridge.home.close(4400, 'replaced'); }catch{} }
+    bridge.home = sock;
+    console.log('[bridge] home PC connected ✓');
+    sock.on('message', raw=>{
+      let m = null; try{ m = JSON.parse(String(raw)); }catch{ return; }
+      if(m && m.id && bridge.pending.has(m.id)){
+        const p = bridge.pending.get(m.id); bridge.pending.delete(m.id);
+        clearTimeout(p.timer); p.resolve(m);
+      }
+    });
+    const gone = ()=>{ if(bridge.home === sock){ bridge.home = null; console.log('[bridge] home PC disconnected'); } };
+    sock.on('close', gone); sock.on('error', gone);
+  });
+}
+function bridgeSend(op, data, ms=25000){
+  return new Promise(resolve=>{
+    const sock = bridge.home;
+    if(!WS || !sock || sock.readyState !== WS.OPEN){ resolve(null); return; }
+    const id = `b${Date.now().toString(36)}${(bridge.seq = (bridge.seq + 1) % 1e6)}`;
+    const timer = setTimeout(()=>{ bridge.pending.delete(id); resolve(null); }, ms);
+    bridge.pending.set(id, {resolve, timer});
+    try{ sock.send(JSON.stringify({id, op, ...data})); }
+    catch{ clearTimeout(timer); bridge.pending.delete(id); resolve(null); }
+  });
+}
+// Client side (home PC): execute cloud-forwarded ops against the real LAN.
+function connectHome(){
+  if(!WS || !CLOUD_URL) return;
+  if(!RELAY_KEY){ console.log('[bridge] RELAY_KEY missing — cloud link disabled'); return; }
+  const sep = CLOUD_URL.includes('?') ? '&' : '?';
+  const target = `${CLOUD_URL}${sep}key=${encodeURIComponent(RELAY_KEY)}`;
+  let retry = 1000;
+  const open = ()=>{
+    let sock = null;
+    try{ sock = new WS(target); }catch{ schedule(); return; }
+    sock.on('open', ()=>{ retry = 1000; console.log('[bridge] linked to cloud ✓ — this PC now relays TV commands'); });
+    sock.on('message', async raw=>{
+      let m = null; try{ m = JSON.parse(String(raw)); }catch{ return; }
+      if(!m || !m.id || !m.op) return;
+      const rep = {id:m.id};
+      try{
+        if(m.op === 'validate'){ const v = await validateIp(m.ip); Object.assign(rep, {ok:true, valid:v.valid, via:v.via, name:v.name, needPair:!!v.needPair}); }
+        else if(m.op === 'cmd'){ Object.assign(rep, await runCmd(m.ip, m.cmd, m.payload || '')); }
+        else if(m.op === 'pair-begin'){ Object.assign(rep, remote2.pairBegin(m.ip)); }
+        else if(m.op === 'pair-code'){ Object.assign(rep, await remote2.pairCode(m.ip, m.code || '')); }
+        else if(m.op === 'pair-status'){ Object.assign(rep, {ok:true, ...remote2.pairStatus(m.ip)}); }
+        else if(m.op === 'scan'){ Object.assign(rep, {ok:true, tvs:await fullScan()}); }
+        else Object.assign(rep, {ok:false, error:'bad op'});
+      }catch(e){ Object.assign(rep, {ok:false, error:String((e && e.message) || e)}); }
+      try{ sock.send(JSON.stringify(rep)); }catch{}
+    });
+    sock.on('close', ()=> schedule());
+    sock.on('error', ()=>{ try{ sock.close(); }catch{} });
+  };
+  const schedule = ()=> setTimeout(open, retry < 30000 ? (retry *= 2) : 30000);
+  open();
+}
+
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 let discovered = [];
 let lastScanAt = 0;
@@ -244,6 +345,19 @@ async function runCmd(ip, cmd, payload){
   return {ok:false, error:'unreachable'};
 }
 
+// In cloud mode, LAN targets execute on the home PC via the bridge.
+// Returns true when the response was (or will be) sent through the bridge.
+const cloudFor = ip => BRIDGE_MODE === 'cloud' && isLanIp(ip || '');
+function bridgeJson(res, op, data, ms=25000){
+  bridgeSend(op, data, ms).then(r=>{
+    if(res.writableEnded) return;
+    if(!r) return json(res, {ok:false, error:'home PC offline — start the helper on your home PC'});
+    const {id, ...out} = r;
+    json(res, (out && out.ok !== undefined) ? out : {ok:false, error:'bad bridge reply'});
+  }).catch(()=>{ if(!res.writableEnded) json(res, {ok:false, error:'bridge failed'}); });
+  return true;
+}
+
 // ---------- server ----------
 const MIME = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon'};
 function onReq(req, res){
@@ -252,9 +366,19 @@ function onReq(req, res){
   const parsed = url.parse(req.url, true);
   const p = parsed.pathname;
 
-  if(p === '/status'){ return json(res, {ok:true, bridge:true, tvs:discovered, lastScanAt}); }
+  if(p === '/status'){ return json(res, {ok:true, bridge:true, mode:BRIDGE_MODE, homeLinked:!!bridge.home, tvs:discovered, lastScanAt}); }
   if(p === '/health'){ return json(res, {ok:true, bridge:true}); }
   if(p === '/scan'){
+    if(BRIDGE_MODE === 'cloud'){
+      if(!bridge.home) return json(res, {tvs:[], error:'home PC offline'});
+      bridgeSend('scan', {}, 120000).then(r=>{
+        if(res.writableEnded) return;
+        if(!r) return json(res, {tvs:discovered});
+        const {id, ...out} = r;
+        json(res, {tvs:(out && out.tvs) || discovered});
+      });
+      return;
+    }
     // Longer budget: sweep of a /24 takes ~4-8s. Site shows progress.
     fullScan().then(()=> json(res, {tvs:discovered})).catch(()=> json(res, {tvs:discovered}));
     return;
@@ -263,6 +387,15 @@ function onReq(req, res){
     const ip = parsed.query.ip || '';
     res.writeHead(200, {'Content-Type':'application/json'});
     if(!ip) return res.end(JSON.stringify({ok:false, valid:false}));
+    if(cloudFor(ip)){
+      bridgeSend('validate', {ip}, 20000).then(r=>{
+        if(res.writableEnded) return;
+        if(!r) return res.end(JSON.stringify({ok:false, valid:false, error:'home PC offline — start the helper on your home PC'}));
+        const {id, ...out} = r;
+        res.end(JSON.stringify(out));
+      });
+      return;
+    }
     validateIp(ip).then(v=>{
       console.log(`[validate] ${ip} → ${v.valid ? v.via : (v.needPair ? 'need-pair' : 'invalid')}`);
       if(v.valid) upsertTv({ip, name:v.name || 'Android TV'});
@@ -277,6 +410,7 @@ function onReq(req, res){
     req.on('end', ()=>{
       try{ body = JSON.parse(body || '{}'); }catch{ body = {}; }
       if(!body.ip) return json(res, {ok:false, error:'no ip'}, 400);
+      if(cloudFor(body.ip)) return bridgeJson(res, 'cmd', {ip:body.ip, cmd:body.cmd, payload:body.payload || ''}, 28000);
       const to = setTimeout(()=>{ if(!res.writableEnded) json(res, {ok:false, error:'timeout'}, 504); }, 25000);
       runCmd(body.ip, body.cmd, body.payload || '').then(r=>{
         clearTimeout(to);
@@ -297,12 +431,17 @@ function onReq(req, res){
       try{ body = JSON.parse(body || '{}'); }catch{ body = {}; }
       const ip = body.ip || parsed.query.ip || '';
       if(!ip) return json(res, {ok:false, error:'no ip'}, 400);
-      if(p === '/remote-status') return json(res, {ok:true, ...remote2.pairStatus(ip)});
+      if(p === '/remote-status'){
+        if(cloudFor(ip)) return bridgeJson(res, 'pair-status', {ip}, 15000);
+        return json(res, {ok:true, ...remote2.pairStatus(ip)});
+      }
       if(p === '/remote-pair'){
+        if(cloudFor(ip)) return bridgeJson(res, 'pair-begin', {ip}, 15000);
         const r = remote2.pairBegin(ip);
         console.log(`[remote-pair] ${ip} → ${r.ok ? (r.alreadyPaired ? 'already paired' : 'PIN requested') : r.error}`);
         return json(res, r);
       }
+      if(cloudFor(ip)) return bridgeJson(res, 'pair-code', {ip, code:body.code || ''}, 30000);
       remote2.pairCode(ip, body.code || '').then(r=>{
         console.log(`[remote-code] ${ip} → ${r.ok ? 'paired' : r.error}`);
         if(r.ok) viaCache.set(ip, 'remote');
@@ -373,6 +512,8 @@ function httpsCreds(){
 
 const server = http.createServer(onReq);
 server.listen(PORT, '0.0.0.0', ()=>{
+  attachBridge(server); // accept home-PC socket on /bridge (both modes)
+  connectHome();        // no-op unless CLOUD_SERVER_URL is set (home PC)
   const lan = lanIp();
   const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME);
   console.log(`\n✅ Online Remote helper at http://localhost:${PORT}/ (Remote v2 — no Cast, no ADB)`);
