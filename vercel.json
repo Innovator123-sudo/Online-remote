@@ -5,6 +5,9 @@
     "api/tv.js": {
       "includeFiles": "api/bin/**",
       "maxDuration": 10
+    },
+    "api/remote.js": {
+      "maxDuration": 30
     }
   },
   "headers": [

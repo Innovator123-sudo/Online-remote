@@ -116,9 +116,18 @@ async function relayApi(params, ms=15000){
   const r = await fetch(`/api/tv?key=${encodeURIComponent(relayKey)}&${params}`, {signal:AbortSignal.timeout(ms)});
   return JSON.parse(await r.text());
 }
+// Remote-protocol cloud relay (no TV settings, no codes — the saved home
+// cert authenticates silently). Same actions/shapes as /api/tv.
+async function remoteApi(params, ms=15000){
+  const r = await fetch(`/api/remote?key=${encodeURIComponent(relayKey)}&${params}`, {signal:AbortSignal.timeout(ms)});
+  return JSON.parse(await r.text());
+}
+const isV6 = h => (h || "").includes(":");
+function cloudApiFor(t){ return isV6(t.host) ? remoteApi : relayApi; }
 function relayErr(j){
   const e = (j && j.error) || "";
   if(e === "bad key") return "Relay key missing — open your invite link once (?key=…) and the same RELAY_KEY env must be set on Vercel.";
+  if(e === "no-cert (set REMOTE_CERT_JSON on Vercel)") return "Cloud cert missing — set REMOTE_CERT_JSON on Vercel (one paste).";
   if(e === "unreachable" || e.indexOf("no adb") === 0) return "TV not reachable from the internet — Wireless debugging ON? Global IPv6 or port-forward set?";
   if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? On-TV prompt accepted?";
   if(e && e.indexOf("not a public") === 0) return "That's a home IP — it routes through the home PC instead.";
@@ -200,10 +209,32 @@ async function sendPairRequest(){
     updateUI();
   }
 }
+// IPv6 cloud check: one silent validate, no codes, no prompts.
+async function cloudV6Check(t, raw){
+  state.busy = true;
+  try{
+    setPairStatus(`Checking ${t.host} from the cloud…`);
+    let v = null;
+    try{ v = await remoteApi(`action=validate&host=${encodeURIComponent(t.host)}`, 20000); }
+    catch{ setPairStatus("Cloud relay unreachable — reload and retry."); return; }
+    if(v && v.valid){
+      addTv(raw, "TV");
+      try{ $("#tvCode").value = ""; }catch{}
+      setPairStatus("");
+      connectTv(state.tvs.find(x=> x.ip === raw));
+    } else {
+      setPairStatus(relayErr(v) === "Relay error — TV on? Reachable from the internet?"
+        ? "TV not answering from the internet — TV ON? Router letting IPv6 in on port 6466?"
+        : relayErr(v));
+    }
+  }finally{ state.busy = false; updateUI(); }
+}
 // Cloud path step 1: validate via relay; if the TV never saw this relay,
 // guide to the TV's wireless-pair screen (host:pair-port + 6-digit code).
 async function cloudPairStart(t){
   if(!relayKey){ setPairStatus("Relay key missing — open your invite link once (?key=…)."); toast("Relay key missing — open your invite link once", "bad"); return; }
+  // IPv6 path: silent cert auth, no codes ever — just check reachability.
+  if(isV6(t.host)){ await cloudV6Check(t, getIp()); return; }
   setPairStatus(`Checking ${t.host} from the cloud…`);
   let v = null;
   try{ v = await relayApi(`action=validate&host=${encodeURIComponent(t.host)}&port=${t.port}`, 15000); }
@@ -273,6 +304,8 @@ async function submitCode(){
 }
 async function cloudSubmitCode(t, code, raw){
   if(!relayKey){ toast("Relay key missing — open your invite link once", "bad"); setPairStatus("Relay key missing — open your invite link once (?key=…)."); return; }
+  // IPv6 path needs no code at all — the saved cert signs in silently.
+  if(isV6(t.host)){ await cloudV6Check(t, raw); return; }
   state.busy = true;
   const btn = $("#connectBtn");
   if(btn) btn.disabled = true;
@@ -377,11 +410,12 @@ async function sendCommand(cmd, payload=""){
     // Fully-cloud path: Vercel ADB relay straight to the TV (laptop off).
     if(t.host && !isLanH(t.host)){
       if(!relayKey){ errToastOnce("Relay key missing — open your invite link once"); return; }
+      const call = isV6(t.host) ? remoteApi : relayApi;
       const p = (cmd === "TEXT")
         ? `action=cmd&host=${encodeURIComponent(t.host)}&port=${t.port}&cmd=TEXT&payload=${encodeURIComponent(payload || "")}`
         : `action=cmd&host=${encodeURIComponent(t.host)}&port=${t.port}&cmd=${encodeURIComponent(cmd)}`;
       let j = null;
-      try{ j = await relayApi(p, 15000); }
+      try{ j = await call(p, 20000); }
       catch{ errToastOnce("Cloud relay unreachable"); return; }
       if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
       else errToastOnce(relayErr(j));
