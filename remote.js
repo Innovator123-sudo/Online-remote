@@ -71,9 +71,58 @@ function prefillIp(){
   const el = $("#tvIp");
   if(el && !el.value) el.value = saved || DEFAULT_IP;
 }
-function validIp(ip){
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip || "");
-  return !!m && m.slice(1).every(o=> +o >= 0 && +o <= 255);
+// Relay key for the cloud ADB path (fully-cloud, laptop off). Saved once —
+// carried in invite links as ?key=, no visible box. Set the same value as
+// the RELAY_KEY env var on Vercel.
+let relayKey = "";
+try{
+  relayKey = localStorage.getItem("relayKey") || "";
+  const qk = (new URLSearchParams(location.search).get("key") || "").trim();
+  if(qk){ relayKey = qk; try{ localStorage.setItem("relayKey", relayKey); }catch{} }
+}catch{}
+function validTarget(s){
+  s = (s || "").trim();
+  if(!s || /\s/.test(s) || s.length > 260) return false;
+  return /[0-9A-Za-z:.%-]/.test(s);
+}
+// Split "host", "host:port", "[v6]:port", bare IPv6 (default port 5555).
+function parseHost(input){
+  let s = (input || "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  let m = /^\[([0-9a-fA-F:]+)\](?::(\d+))?$/.exec(s);
+  if(m) return {host:m[1], port:clampPort(m[2])};
+  const colons = (s.match(/:/g) || []).length;
+  if(colons > 1) return {host:s, port:5555}; // bare IPv6
+  m = /^(.*?):(\d+)$/.exec(s);
+  if(m) return {host:m[1], port:clampPort(m[2])};
+  return {host:s, port:5555};
+}
+function clampPort(p){
+  const n = parseInt(p || "5555", 10);
+  return Math.max(1, Math.min(65535, isNaN(n) ? 5555 : n));
+}
+// Home-LAN IPv4 goes to the home PC; global IPv6 / public names go
+// through the Vercel ADB relay (works with the laptop OFF, TV on).
+function isLanH(host){
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host || "");
+  if(!m) return false;
+  if(m.slice(1).some(o=> +o < 0 || +o > 255)) return false;
+  const a = +m[1], b = +m[2];
+  return a === 10 || a === 127 || a === 0
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254);
+}
+async function relayApi(params, ms=15000){
+  const r = await fetch(`/api/tv?key=${encodeURIComponent(relayKey)}&${params}`, {signal:AbortSignal.timeout(ms)});
+  return JSON.parse(await r.text());
+}
+function relayErr(j){
+  const e = (j && j.error) || "";
+  if(e === "bad key") return "Relay key missing — open your invite link once (?key=…) and the same RELAY_KEY env must be set on Vercel.";
+  if(e === "unreachable" || e.indexOf("no adb") === 0) return "TV not reachable from the internet — Wireless debugging ON? Global IPv6 or port-forward set?";
+  if(e && e.indexOf("send failed") === 0) return "Send failed — TV asleep? On-TV prompt accepted?";
+  if(e && e.indexOf("not a public") === 0) return "That's a home IP — it routes through the home PC instead.";
+  return e || "Relay error — TV on? Reachable from the internet?";
 }
 async function sameOrigin(path, body, ms=25000){
   const opts = body === undefined
@@ -105,36 +154,40 @@ function disconnect(){
   updateUI();
   toast("Disconnected");
 }
-// Step 1: type IP → TV answers? connect at once : send pair request → code on TV.
+// Step 1: type address → TV answers? connect at once : pair → code on TV.
+// LAN IPv4 → home PC. Anything internet-reachable → cloud relay (laptop off).
 async function sendPairRequest(){
   if(state.busy) return;
-  const ip = getIp();
-  if(!validIp(ip)){ toast("Type the TV IP first — e.g. 192.168.1.84", "bad"); return; }
+  const raw = getIp();
+  if(!validTarget(raw)){ toast("Type the TV address first — e.g. 192.168.1.84", "bad"); return; }
+  const t = parseHost(raw);
+  if(!t.host){ toast("Type the TV address first — e.g. 192.168.1.84", "bad"); return; }
   state.busy = true;
   const btn = $("#sendCodeBtn");
   if(btn) btn.disabled = true;
   try{
-    setPairStatus(`Checking ${ip}…`);
+    if(!isLanH(t.host)){ await cloudPairStart(t); return; }
+    setPairStatus(`Checking ${t.host}…`);
     let v = null;
-    try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }
+    try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(t.host)}`, undefined, 15000); }
     catch{ setPairStatus(homePageHint()); return; }
     if(v && v.valid){
-      if(v.name) addTv(ip, v.name); else addTv(ip);
+      if(v.name) addTv(raw, v.name); else addTv(raw);
       setPairStatus("");
-      connectTv(state.tvs.find(x=> x.ip === ip));
+      connectTv(state.tvs.find(x=> x.ip === raw));
       return; // already paired before — straight in, no code needed
     }
     setPairStatus("Sending code to TV — look at the TV screen…");
     let p = null;
-    try{ p = await sameOrigin("/remote-pair", {ip}, 12000); }
+    try{ p = await sameOrigin("/remote-pair", {ip:t.host}, 12000); }
     catch{ setPairStatus(homePageHint()); return; }
     if(p && p.ok && p.alreadyPaired){
       let v2 = null;
-      try{ v2 = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }catch{}
-      if(v2 && v2.valid){ if(v2.name) addTv(ip, v2.name); else addTv(ip); setPairStatus(""); connectTv(state.tvs.find(x=> x.ip === ip)); return; }
+      try{ v2 = await sameOrigin(`/validate?ip=${encodeURIComponent(t.host)}`, undefined, 15000); }catch{}
+      if(v2 && v2.valid){ if(v2.name) addTv(raw, v2.name); else addTv(raw); setPairStatus(""); connectTv(state.tvs.find(x=> x.ip === raw)); return; }
     }
     if(p && p.ok){
-      addTv(ip);
+      addTv(raw);
       setPairStatus("Code is on your TV — type it below, tap Connect.");
       toast("Code sent — read it on the TV", "good");
       const c = $("#tvCode"); if(c) c.focus();
@@ -147,24 +200,45 @@ async function sendPairRequest(){
     updateUI();
   }
 }
+// Cloud path step 1: validate via relay; if the TV never saw this relay,
+// guide to the TV's wireless-pair screen (host:pair-port + 6-digit code).
+async function cloudPairStart(t){
+  if(!relayKey){ setPairStatus("Relay key missing — open your invite link once (?key=…)."); toast("Relay key missing — open your invite link once", "bad"); return; }
+  setPairStatus(`Checking ${t.host} from the cloud…`);
+  let v = null;
+  try{ v = await relayApi(`action=validate&host=${encodeURIComponent(t.host)}&port=${t.port}`, 15000); }
+  catch{ setPairStatus("Cloud relay unreachable — Vercel function asleep? Reload and retry."); return; }
+  if(v && v.valid){
+    addTv(getIp(), v.model || "TV");
+    setPairStatus("");
+    connectTv(state.tvs.find(x=> x.ip === getIp()));
+    return;
+  }
+  setPairStatus("TV not paired with the cloud yet — on the TV open Wireless debugging → “Pair device with pairing code”, then type host:pair-port above and the 6-digit code below, tap Connect.");
+  toast("TV needs wireless pairing — see the TV screen", "warn");
+}
 // Step 2: type the TV code → Connect.
+// LAN → home-PC code (digits or A–F). Cloud → wireless-pairing 6-digit code
+// (type host:pair-port above when pairing for the first time).
 async function submitCode(){
   if(state.busy) return;
-  const ip = getIp();
-  if(!validIp(ip)){ toast("Type the TV IP first — e.g. 192.168.1.84", "bad"); return; }
+  const raw = getIp();
+  if(!validTarget(raw)){ toast("Type the TV address first — e.g. 192.168.1.84", "bad"); return; }
+  const t = parseHost(raw);
   const code = (($("#tvCode") || {}).value || "").trim().replace(/\s+/g, "");
+  if(!isLanH(t.host)){ await cloudSubmitCode(t, code, raw); return; }
   // If the TV was already paired, Connect works with no code at all.
   if(!code){
     state.busy = true;
     try{
-      setPairStatus(`Checking ${ip}…`);
+      setPairStatus(`Checking ${t.host}…`);
       let v = null;
-      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }
+      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(t.host)}`, undefined, 15000); }
       catch{ setPairStatus(homePageHint()); return; }
       if(v && v.valid){
-        if(v.name) addTv(ip, v.name); else addTv(ip);
+        if(v.name) addTv(raw, v.name); else addTv(raw);
         setPairStatus("");
-        connectTv(state.tvs.find(x=> x.ip === ip));
+        connectTv(state.tvs.find(x=> x.ip === raw));
       } else {
         setPairStatus("TV needs a code — tap Send code to TV first.");
       }
@@ -178,18 +252,69 @@ async function submitCode(){
   try{
     setPairStatus("Sending code…");
     let j = null;
-    try{ j = await sameOrigin("/remote-code", {ip, code}, 25000); }
+    try{ j = await sameOrigin("/remote-code", {ip:t.host, code}, 25000); }
     catch{ setPairStatus(homePageHint()); return; }
     if(j && j.ok){
       try{ $("#tvCode").value = ""; }catch{}
       toast("Paired ✓ — connecting…", "good");
       let v = null;
-      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }catch{}
-      if(v && v.name) addTv(ip, v.name); else addTv(ip);
+      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(t.host)}`, undefined, 15000); }catch{}
+      if(v && v.name) addTv(raw, v.name); else addTv(raw);
       setPairStatus("");
-      connectTv(state.tvs.find(x=> x.ip === ip));
+      connectTv(state.tvs.find(x=> x.ip === raw));
     } else {
       setPairStatus((j && j.error) || "Wrong code — tap Send code to TV for a fresh one.");
+    }
+  }finally{
+    state.busy = false;
+    if(btn) btn.disabled = false;
+    updateUI();
+  }
+}
+async function cloudSubmitCode(t, code, raw){
+  if(!relayKey){ toast("Relay key missing — open your invite link once", "bad"); setPairStatus("Relay key missing — open your invite link once (?key=…)."); return; }
+  state.busy = true;
+  const btn = $("#connectBtn");
+  if(btn) btn.disabled = true;
+  try{
+    if(!code){
+      setPairStatus(`Checking ${t.host} from the cloud…`);
+      let v = null;
+      try{ v = await relayApi(`action=validate&host=${encodeURIComponent(t.host)}&port=${t.port}`, 15000); }
+      catch{ setPairStatus("Cloud relay unreachable — reload and retry."); return; }
+      if(v && v.valid){
+        addTv(raw, v.model || "TV");
+        setPairStatus("");
+        connectTv(state.tvs.find(x=> x.ip === raw));
+      } else {
+        setPairStatus(relayErr(v));
+      }
+      return;
+    }
+    if(!/^\d{6}$/.test(code)){ toast("Wireless pairing codes are 6 digits — read the TV's pair screen", "bad"); return; }
+    if(t.port === 5555){
+      setPairStatus("First wireless pair needs the pairing port too — type host:pair-port (both shown on the TV's pair screen) above, code below, tap Connect again.");
+      return;
+    }
+    setPairStatus("Pairing from the cloud…");
+    let j = null;
+    try{ j = await relayApi(`action=pair&host=${encodeURIComponent(t.host)}&port=${t.port}&code=${encodeURIComponent(code)}`, 15000); }
+    catch{ setPairStatus("Cloud relay unreachable — reload and retry."); return; }
+    if(j && j.ok){
+      try{ $("#tvCode").value = ""; }catch{}
+      try{ $("#tvIp").value = t.host; }catch{}
+      toast("Cloud-paired ✓ — connecting…", "good");
+      let v = null;
+      try{ v = await relayApi(`action=validate&host=${encodeURIComponent(t.host)}&port=5555`, 15000); }catch{}
+      if(v && v.valid){
+        addTv(t.host, v.model || "TV");
+        setPairStatus("");
+        connectTv(state.tvs.find(x=> x.ip === t.host));
+      } else {
+        setPairStatus("Paired — now tap Connect once more (port 5555).");
+      }
+    } else {
+      setPairStatus(relayErr(j));
     }
   }finally{
     state.busy = false;
@@ -248,7 +373,21 @@ async function sendCommand(cmd, payload=""){
     return;
   }
   try{
-    const j = await sameOrigin("/cmd", {ip:tv.ip, cmd, payload:payload || ""}, 12000);
+    const t = parseHost(tv.ip || "");
+    // Fully-cloud path: Vercel ADB relay straight to the TV (laptop off).
+    if(t.host && !isLanH(t.host)){
+      if(!relayKey){ errToastOnce("Relay key missing — open your invite link once"); return; }
+      const p = (cmd === "TEXT")
+        ? `action=cmd&host=${encodeURIComponent(t.host)}&port=${t.port}&cmd=TEXT&payload=${encodeURIComponent(payload || "")}`
+        : `action=cmd&host=${encodeURIComponent(t.host)}&port=${t.port}&cmd=${encodeURIComponent(cmd)}`;
+      let j = null;
+      try{ j = await relayApi(p, 15000); }
+      catch{ errToastOnce("Cloud relay unreachable"); return; }
+      if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
+      else errToastOnce(relayErr(j));
+      return;
+    }
+    const j = await sameOrigin("/cmd", {ip:t.host || tv.ip, cmd, payload:payload || ""}, 12000);
     if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
     else if(j && j.error === "need-pair"){
       errToastOnce("TV needs approval again — type the IP, tap Send code to TV");

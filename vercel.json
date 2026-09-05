@@ -1,6 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "functions": {
+    "api/tv.js": {
+      "includeFiles": "api/bin/**",
+      "maxDuration": 10
+    }
+  },
   "headers": [
     {
       "source": "/sw.js",
