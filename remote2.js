@@ -14,8 +14,16 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
-const CERT_DIR = path.join(__dirname, 'remote-certs');
+const CERT_DIR = process.env.REMOTE_CERT_DIR || path.join(__dirname, 'remote-certs');
 try{ fs.mkdirSync(CERT_DIR, {recursive:true}); }catch{}
+function envCert(){
+  // Railway / cloud: ephemeral disk, so the paired cert survives via env var.
+  try{
+    const j = JSON.parse(process.env.REMOTE_CERT_JSON || '');
+    if(j && j.key && j.cert) return {key:j.key, cert:j.cert};
+  }catch{}
+  return null;
+}
 
 let Lib = null, libTried = false;
 function lib(){
@@ -38,6 +46,9 @@ function available(){ return !!lib(); }
 const REMOTE_KEYS = {UP:19, DOWN:20, LEFT:21, RIGHT:22, OK:23, BACK:4, HOME:3, MUTE:164, POWER:26};
 function certPath(ip){ return path.join(CERT_DIR, String(ip).replace(/[^a-zA-Z0-9.-]/g, '_') + '.json'); }
 function loadCert(ip){
+  // Single-TV cloud deployments store the cert in REMOTE_CERT_JSON instead of disk.
+  const e = envCert();
+  if(e) return e;
   try{
     const j = JSON.parse(fs.readFileSync(certPath(ip), 'utf8'));
     if(j && j.key && j.cert) return {key:j.key, cert:j.cert};

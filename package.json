@@ -8,6 +8,9 @@
     "start": "node helper.js"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "androidtv-remote": "^1.0.10",
     "selfsigned": "^2.4.1"

@@ -1,5 +1,6 @@
 node_modules/
 remote-certs/
+api/remote-cert.json
 https-cert/
 .env
 .env.local

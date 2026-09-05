@@ -374,8 +374,19 @@ function httpsCreds(){
 const server = http.createServer(onReq);
 server.listen(PORT, '0.0.0.0', ()=>{
   const lan = lanIp();
+  const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME);
   console.log(`\n✅ Online Remote helper at http://localhost:${PORT}/ (Remote v2 — no Cast, no ADB)`);
+  if(process.env.RAILWAY_PUBLIC_DOMAIN) console.log(`   🌍 Public (Railway): https://${process.env.RAILWAY_PUBLIC_DOMAIN}/`);
   if(lan) console.log(`   📱 Same Wi-Fi phones (pairing):  http://${lan}:${PORT}/`);
+  if(onRailway){
+    // Railway gives ONE port and terminates TLS itself — no second https
+    // listener. Camera + pairing work over the public https URL. TV certs
+    // persist via REMOTE_CERT_JSON env (disk is ephemeral) or a Volume
+    // mounted at REMOTE_CERT_DIR.
+    console.log('   🚂 Railway mode: single-port http (TLS handled by Railway).');
+    console.log('   Scan: LAN sweep (port 6466) + SSDP. Pair: approve PIN on TV once.\n');
+    return;
+  }
   // Camera needs https → second listener with auto-generated cert.
   const creds = httpsCreds();
   const SPORT = parseInt(process.env.SPORT, 10) || 5443;
