@@ -4,12 +4,16 @@
  * protocol the official Google TV phone app uses.
  *
  *   node helper.js   →   http://localhost:5000  (+ LAN URL printed)
+ *   (+ https://<LAN-IP>:5443 with an auto-generated certificate —
+ *   Chrome blocks the camera on plain http, so gestures need the https URL.
+ *   Accept the one-time certificate warning, then camera + pairing work.)
  *
  * Scan = active LAN sweep for the TV remote port + SSDP listen.
  * Connect = pair request → TV shows PIN/Allow → approve once →
  *           cert saved → keys + typing work forever.
  */
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -242,7 +246,7 @@ async function runCmd(ip, cmd, payload){
 
 // ---------- server ----------
 const MIME = {'.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.webmanifest':'application/manifest+json', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon'};
-const server = http.createServer((req, res)=>{
+function onReq(req, res){
   pna(res, req);
   if(req.method === 'OPTIONS'){ res.writeHead(204); return res.end(); }
   const parsed = url.parse(req.url, true);
@@ -318,20 +322,72 @@ const server = http.createServer((req, res)=>{
     res.writeHead(200, {'Content-Type':MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream', 'Cache-Control':'no-cache'});
     res.end(data);
   });
-});
+}
 
-server.listen(PORT, '0.0.0.0', ()=>{
-  let lan = '';
+function lanIp(){
   try{
     const nets = require('os').networkInterfaces();
+    const found = [];
     for(const n of Object.keys(nets)){
       for(const a of nets[n] || []){
-        if(a.family === 'IPv4' && !a.internal && /^(192\.168\.|10\.|172\.)/.test(a.address)){ lan = a.address; break; }
+        if(a.family === 'IPv4' && !a.internal && /^(192\.168\.|10\.|172\.)/.test(a.address) && !found.includes(a.address)) found.push(a.address);
       }
-      if(lan) break;
+    }
+    // Prefer real home Wi-Fi over virtual adapters: 192.168.x > 10.x > 172.16-31.x
+    const rank = ip => ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : 2;
+    found.sort((a, b) => rank(a) - rank(b));
+    return found[0] || '';
+  }catch{}
+  return '';
+}
+
+// Self-signed certificate for the LAN https server (camera needs a secure
+// context; plain http://192.168.x.x is not one). Generated once, reused.
+function httpsCreds(){
+  const dir = path.join(__dirname, 'https-cert');
+  const keyP = path.join(dir, 'key.pem'), certP = path.join(dir, 'cert.pem');
+  try{
+    if(fs.existsSync(keyP) && fs.existsSync(certP)){
+      return {key:fs.readFileSync(keyP), cert:fs.readFileSync(certP)};
     }
   }catch{}
+  let selfsigned = null;
+  try{ selfsigned = require('selfsigned'); }catch{ return null; }
+  const lan = lanIp();
+  const sans = [{name:'critical', cA:false}];
+  const altNames = [{type:2, value:'localhost'}, {type:7, ip:'127.0.0.1'}, {type:7, ip:'::1'}];
+  if(lan){
+    altNames.push({type:2, value:lan});
+    if(/^\d+\.\d+\.\d+\.\d+$/.test(lan)) altNames.push({type:7, ip:lan});
+  }
+  try{
+    const pems = selfsigned.generate([{name:'commonName', value:lan || 'localhost'}], {
+      keySize:2048, days:825, algorithm:'sha256',
+      extensions:[{name:'basicConstraints', cA:false}, {name:'subjectAltName', altNames}],
+    });
+    try{ fs.mkdirSync(dir, {recursive:true}); }catch{}
+    try{ fs.writeFileSync(keyP, pems.private); fs.writeFileSync(certP, pems.cert); }catch{}
+    return {key:pems.private, cert:pems.cert};
+  }catch(e){ console.log('[https] cert generation failed: ' + ((e && e.message) || e)); return null; }
+}
+
+const server = http.createServer(onReq);
+server.listen(PORT, '0.0.0.0', ()=>{
+  const lan = lanIp();
   console.log(`\n✅ Online Remote helper at http://localhost:${PORT}/ (Remote v2 — no Cast, no ADB)`);
-  if(lan) console.log(`   📱 Same Wi-Fi phones:  http://${lan}:${PORT}/`);
+  if(lan) console.log(`   📱 Same Wi-Fi phones (pairing):  http://${lan}:${PORT}/`);
+  // Camera needs https → second listener with auto-generated cert.
+  const creds = httpsCreds();
+  const SPORT = parseInt(process.env.SPORT, 10) || 5443;
+  if(creds){
+    try{
+      https.createServer(creds, onReq).listen(SPORT, '0.0.0.0', ()=>{
+        if(lan) console.log(`   📷 Same Wi-Fi phones (camera+pairing): https://${lan}:${SPORT}/  (accept the cert warning once)`);
+        else console.log(`   📷 Camera page: https://localhost:${SPORT}/`);
+      });
+    }catch(e){ console.log('[https] disabled: ' + ((e && e.message) || e)); }
+  } else {
+    console.log('   📷 Camera needs https — run `npm i selfsigned` then restart to enable it.');
+  }
   console.log('   Scan: LAN sweep (port 6466) + SSDP. Pair: approve PIN on TV once.\n');
 });

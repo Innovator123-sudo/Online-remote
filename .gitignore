@@ -1,5 +1,6 @@
 node_modules/
 remote-certs/
+https-cert/
 .env
 .env.local
 *.log

@@ -1,6 +1,6 @@
 /* Online Remote — service worker: cache the site shell automatically so
    repeat visits (and rescans) are instant. Pure static site, no API. */
-const CACHE = "online-remote-v4";
+const CACHE = "online-remote-v5";
 const SHELL = ["./", "./index.html", "./style.css", "./remote.js", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", e => {

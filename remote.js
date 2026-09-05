@@ -966,7 +966,7 @@ function hideSplash(){
     bootProgress(12, "Preparing offline cache…");
     try{
       if("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost","127.0.0.1"].includes(location.hostname))){
-        navigator.serviceWorker.register("sw.js").catch(()=>{});
+        navigator.serviceWorker.register("sw.js?v=5", {updateViaCache:"none"}).then(r=>{ try{ r.update(); }catch{} }).catch(()=>{});
       }
     }catch{}
     bootProgress(46, "Loading gesture engine…");
