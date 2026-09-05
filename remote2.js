@@ -120,11 +120,13 @@ function pairBegin(ip){
 }
 async function pairCode(ip, code){
   if(!lib()) return {ok:false, error:'tv-protocol not installed'};
-  if(!/^\d{4,8}$/.test(String(code || ''))) return {ok:false, error:'code is the digits shown on the TV'};
+  // TVs may show a decimal PIN (123456) or a HEXADECIMAL code (018A0D) —
+  // the TV announces its encoding in pairingOption.outputEncodings.
+  if(!/^[0-9A-Fa-f]{4,8}$/.test(String(code || '').trim())) return {ok:false, error:'code is the 4–8 characters shown on the TV'};
   const rec = pending.get(ip);
   if(!rec) return {ok:false, error:'no pairing in progress — start pairing first'};
   let accepted = false;
-  try{ accepted = rec.remote.sendCode(String(code)); }
+  try{ accepted = rec.remote.sendCode(String(code).trim()); }
   catch(e){ accepted = false; }
   if(!accepted){
     try{ pending.delete(ip); }catch{}

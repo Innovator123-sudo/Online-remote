@@ -1,4 +1,5 @@
 node_modules/
+remote-certs/
 .env
 .env.local
 *.log
@@ -6,8 +7,6 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
-scan-results.json
-remote-certs/
 
 .vercel
 .env*

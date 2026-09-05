@@ -1,35 +1,56 @@
-# Online Remote — Gesture TV Remote
+# Online Remote — Gesture TV Remote (USB-ADB, static site)
 
-Phone → TV remote signals, exactly like a physical remote. No Cast, no apps opening on screen, Home never disconnects. Same Wi-Fi.
+Browser → TV remote over a **USB cable**. No server, no terminal, no Wi-Fi needed.
+ADB runs **inside the website** (WebUSB), gestures run on-device (MediaPipe).
 
-## Gestures (camera grid)
-|---|---|
-| Palm in ▲ ▼ ◀ ▶ zone (hold ~1.2s) | Arrow key |
-| 👍 Thumbs-up or ✊ fist (hold) | OK |
-| 👎 Thumbs-down (hold) | Back |
-| ✌️ Two fingers, draw a letter | Types it — only while 🔍 Search is on |
-| CENTER zone | Idle rest space |
+## What you get
 
-Keyboard too: arrows, Enter=OK, Backspace=Back, H=Home, M=Mute, Space=pause.
+- **01 Connect** — Scan / Add USB device, one-tap Connect, Unlink
+- **02 Remote** — D-pad, Home/Back/Mute/Power, text send, drawn-word send
+- **03 Gestures** — palm steers arrows, 👍 = OK, 👎 = Back, ✌️ draws letters
 
-## Run it — cloud-first, no localhost needed
+## Setup — first time (2 minutes)
 
-**A. Cloud relay (recommended):** the hosted page drives the TV through `/api/tv`.
-1. Make the TV reachable from the internet **once**: router port-forward, e.g. external TCP `15555` → `TV-IP:5555` (or use the TV's global IPv6). No port forward = no cloud path, it's that simple.
-2. On the TV: Developer options → Network/USB debugging ON.
-3. Open the site and tap **Scan**, then tap your TV in the list — the TV shows an Allow prompt, tap **Allow** there, done. (No addresses: with the helper on the same Wi-Fi, discovery is automatic. Over the internet, type the address once or use the Pair-with-code box.)
+**On the TV (once):**
+1. Settings → About → tap **Build number 7×** → Developer options appear.
+2. Settings → Developer options → turn **USB debugging ON**.
+3. Plug the TV into your phone/PC with a USB cable.
 
-**B. Home helper (same Wi-Fi, no router changes):** everything runs from the site itself — open it on your phone (same Wi-Fi as the TV) and tap Scan. No installs, no typing addresses.
+**On the site:**
+4. Open your hosted URL in **Chrome or Edge** (WebUSB is Chromium-only;
+   iPhone/iPad Safari won't work — use an Android phone or a PC).
+   The page must be `https://…` (Vercel gives you that) or `localhost`.
+5. Tap **Scan for my TV** (or **Add USB device**) → pick the TV in the
+   browser's USB picker.
+6. On the TV, tick **Always allow** → tap **Allow**.
+7. Done — D-pad, keyboard (`Arrows/Enter/Backspace/H/M`), and gestures work.
 
-On the TV (once): enable Developer options → Network/USB debugging, accept the prompt.
+Next visits: plug in → open site → **Scan** → Connect. The key is remembered.
+
+## Deploy on Vercel (static, free)
+
+This repo is pure static — no functions, no env vars, no build step.
+
+- **Option A — Vercel dashboard:** Push this folder to GitHub → vercel.com →
+  Add New → Project → Import the repo → Deploy. No settings to change.
+- **Option B — CLI:** `npm i -g vercel` → `vercel` (link) → `vercel --prod`.
+
+Files served: `index.html`, `remote.js`, `adb-site.js`, `style.css`,
+`sw.js`, `manifest.webmanifest`, `icon.svg`.
+
+## Requirements / limits
+
+- Chromium browser (Chrome/Edge, Android or desktop). No Firefox/Safari USB.
+- Secure context: `https://` or `localhost` (else USB + camera are blocked).
+- One USB cable between the browsing device and the TV.
+- Gestures need camera permission + good light, 40–80 cm from camera.
 
 ## Files
 
 ```
 index.html       — UI (connect, remote, gesture grid, fullscreen zones)
+remote.js        — USB connect/send + gesture engine + camera (no deps)
+adb-site.js      — in-site ADB over WebUSB (Tango, CDN-cached, no install)
 style.css        — mobile-first theme
-app.js           — gestures + draw recognizer + remote client (zero deps)
-helper.js        - home helper: static host + discovery + ADB signals (zero deps)
+sw.js            — offline cache for the shell + CDN libs
 ```
-
-Deploys anywhere static: Vercel, Netlify, GitHub Pages.

@@ -1,19 +1,14 @@
 {
   "name": "online-remote",
-  "version": "3.1.0",
-  "description": "Gesture TV remote: Fully cloud-hosted solution, 24/7 remote access to Android TVs.",
-  "engines": {
-    "node": "22.x"
-  },
+  "version": "4.1.0",
+  "private": true,
+  "description": "Gesture TV remote. Public link = USB-ADB static site. Home PC (node helper.js) = Wi-Fi scan + pair-code + connect.",
   "scripts": {
-    "start": "node helper.js",
     "helper": "node helper.js",
-    "cloud-server": "node facilities/remote-cloud-server.js"
+    "start": "node helper.js"
   },
   "license": "MIT",
   "dependencies": {
-    "androidtv-remote": "^1.0.10",
-    "express": "^5.2.1",
-    "ws": "^8.21.3"
+    "androidtv-remote": "^1.0.10"
   }
 }

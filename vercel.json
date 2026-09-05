@@ -1,8 +1,4 @@
 {
-  "functions": {
-    "api/tv.js": {
-      "includeFiles": "api/bin/**",
-      "maxDuration": 10
-    }
-  }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true
 }
