@@ -397,7 +397,11 @@ function updateUI(){
 
 // ---------- SEND (one signal per keypress, like a real remote) ----------
 async function sendCommand(cmd, payload=""){
-  if(!state.connected){ errToastOnce("Not connected — pair first"); return; }
+  if(!state.connected){
+    errToastOnce("Not connected — type the TV IP above and Connect first");
+    try{ $("#connect").scrollIntoView({behavior:"smooth", block:"start"}); }catch{}
+    return;
+  }
   const tv = state.connected;
   if(cmd === "TEXT" && !state.searchActive){
     state.word += payload;
