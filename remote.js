@@ -1,7 +1,7 @@
-/* Online Remote — gesture TV remote, USB-ADB only (static hosting).
-   No Cast, no cloud relay, no LAN helper, no terminal.
-   Single method: built-in ADB in this site (WebUSB via adb-site.js).
-   Plug TV with USB cable → Add USB device → Allow on TV → keys work.
+/* Online Remote — gesture TV remote. One flow only:
+   type TV IP → Send code to TV → type the TV code → Connect.
+   Same-origin calls to the home PC (node helper.js). No cloud, no USB,
+   no scan, no keys, nothing else.
    Gestures: palm position = arrows, thumbs-up/fist = OK, thumbs-down = back,
    two fingers = draw letters (type when Search is on). */
 
@@ -33,7 +33,7 @@ function errToastOnce(msg){
 
 // ---------- STATE ----------
 const state = {
-  tvs: [], connected: null, scanning: false,
+  tvs: [], connected: null, busy: false,
   searchActive: false,
   pause: false, deadPct: 32, DWELL_MS: 1200,
   _dwellKey: null, _dwellStart: 0, _dwellFired: false,
@@ -56,71 +56,44 @@ if(themeToggle) themeToggle.onclick = ()=>{
 const navToggleEl = $("#navToggle");
 if(navToggleEl) navToggleEl.onclick = ()=> $("#navLinks").classList.toggle("open");
 
-// ---------- USB TV LIST + CONNECT (built-in ADB only) ----------
-function setScanStatus(t){ const el = $("#scanStatus"); if(el) el.textContent = t || ""; }
-function setUsbStatus(t){ const el = $("#usbStatus"); if(el) el.textContent = t || ""; }
-function addUsbTv(picked){
-  if(!picked) return null;
-  const ip = picked.id || `usb:${picked.serial}`;
+// ---------- PAIR FLOW (the only flow: IP → code → connect) ----------
+const DEFAULT_IP = "192.168.1.84";
+function setPairStatus(t){ const el = $("#pairStatus"); if(el) el.textContent = t || ""; }
+function getIp(){
+  const v = (($("#tvIp") || {}).value || "").trim();
+  const ip = v || DEFAULT_IP;
+  try{ localStorage.setItem("tvIp", ip); }catch{}
+  return ip;
+}
+function prefillIp(){
+  let saved = "";
+  try{ saved = localStorage.getItem("tvIp") || ""; }catch{}
+  const el = $("#tvIp");
+  if(el && !el.value) el.value = saved || DEFAULT_IP;
+}
+function validIp(ip){
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip || "");
+  return !!m && m.slice(1).every(o=> +o >= 0 && +o <= 255);
+}
+async function sameOrigin(path, body, ms=25000){
+  const opts = body === undefined
+    ? {signal:AbortSignal.timeout(ms)}
+    : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body), signal:AbortSignal.timeout(ms)};
+  const r = await fetch(path, opts);
+  return JSON.parse(await r.text());
+}
+function homePageHint(){
+  return "Home page unreachable — open http://192.168.1.67:5000 on home Wi-Fi with node helper.js running on the PC.";
+}
+function addTv(ip, name){
+  if(!ip) return null;
   let tv = state.tvs.find(x=> x.ip === ip);
   if(!tv){
-    tv = {id:uid(), name:picked.productName || picked.name || "USB TV", ip, model:(picked.productName || "USB ADB").slice(0,32), via:"usb-adb"};
+    tv = {id:uid(), name:name || "TV", ip, model:"Android TV", via:"wifi"};
     state.tvs.push(tv);
   }
-  tv._usb = picked;
-  tv.name = picked.productName || picked.name || tv.name;
-  tv.model = (picked.productName || "USB ADB").slice(0, 32);
-  tv.via = "usb-adb";
+  if(name) tv.name = name;
   return tv;
-}
-async function scanSiteUsb(quiet){
-  if(!window.SiteAdb) return 0;
-  let sup = null;
-  try{ sup = window.SiteAdb.supported(); }catch{ sup = {ok:false}; }
-  if(!sup || !sup.ok){ if(!quiet) setUsbStatus(sup ? sup.reason : "USB unavailable here"); return 0; }
-  try{
-    if(!quiet) setUsbStatus("Checking USB devices plugged into this device…");
-    const found = await window.SiteAdb.scanUsb(setUsbStatus);
-    (found || []).forEach(p=> addUsbTv(p));
-    if(!quiet){
-      if(found && found.length) setUsbStatus(`Found ${found.length} USB device(s) — tap Connect.`);
-      else setUsbStatus("No USB device yet — plug the TV in, enable USB debugging, tap “Add USB device”.");
-      setTimeout(()=> setUsbStatus(""), 7000);
-    }
-    updateUI();
-    return (found || []).length;
-  }catch(e){
-    if(!quiet){ setUsbStatus(String((e && e.message) || e).slice(0, 120)); setTimeout(()=> setUsbStatus(""), 7000); }
-    return 0;
-  }
-}
-async function connectUsbTv(tv){
-  if(!window.SiteAdb){ toast("Built-in ADB still loading — retry in a second", "bad"); return; }
-  const sup = window.SiteAdb.supported();
-  if(!sup.ok){ toast(sup.reason, "bad"); return; }
-  try{
-    let picked = tv._usb;
-    if(!picked || typeof picked._raw?.connect !== "function"){
-      setUsbStatus("Opening USB picker — choose your TV…");
-      toast("Choose your TV in the USB picker");
-      picked = await window.SiteAdb.pickUsb(setUsbStatus);
-      if(!picked){ setUsbStatus(""); return; }
-      tv = addUsbTv(picked) || tv;
-      tv._usb = picked;
-    }
-    setUsbStatus("Linking USB ADB — approve “Allow USB debugging” on the TV…");
-    toast(`Linking ${tv.name}… approve on the TV`);
-    const info = await window.SiteAdb.connectUsb(picked || tv._usb, setUsbStatus);
-    if(info && info.productName) { tv.name = info.productName.slice(0, 40); tv.model = info.productName.slice(0, 32); }
-    tv.via = "usb-adb";
-    setUsbStatus("");
-    connectTv(tv);
-  }catch(e){
-    setUsbStatus(String((e && e.message) || e).slice(0, 140));
-    toast(String((e && e.message) || e).slice(0, 140), "bad");
-    setTimeout(()=> setUsbStatus(""), 9000);
-  }
-  updateUI();
 }
 function connectTv(tv){
   state.connected = tv;
@@ -129,26 +102,119 @@ function connectTv(tv){
 }
 function disconnect(){
   state.connected = null;
-  try{ if(window.SiteAdb) window.SiteAdb.disconnect(); }catch{}
   updateUI();
   toast("Disconnected");
+}
+// Step 1: type IP → TV answers? connect at once : send pair request → code on TV.
+async function sendPairRequest(){
+  if(state.busy) return;
+  const ip = getIp();
+  if(!validIp(ip)){ toast("Type the TV IP first — e.g. 192.168.1.84", "bad"); return; }
+  state.busy = true;
+  const btn = $("#sendCodeBtn");
+  if(btn) btn.disabled = true;
+  try{
+    setPairStatus(`Checking ${ip}…`);
+    let v = null;
+    try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }
+    catch{ setPairStatus(homePageHint()); return; }
+    if(v && v.valid){
+      if(v.name) addTv(ip, v.name); else addTv(ip);
+      setPairStatus("");
+      connectTv(state.tvs.find(x=> x.ip === ip));
+      return; // already paired before — straight in, no code needed
+    }
+    setPairStatus("Sending code to TV — look at the TV screen…");
+    let p = null;
+    try{ p = await sameOrigin("/remote-pair", {ip}, 12000); }
+    catch{ setPairStatus(homePageHint()); return; }
+    if(p && p.ok && p.alreadyPaired){
+      let v2 = null;
+      try{ v2 = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }catch{}
+      if(v2 && v2.valid){ if(v2.name) addTv(ip, v2.name); else addTv(ip); setPairStatus(""); connectTv(state.tvs.find(x=> x.ip === ip)); return; }
+    }
+    if(p && p.ok){
+      addTv(ip);
+      setPairStatus("Code is on your TV — type it below, tap Connect.");
+      toast("Code sent — read it on the TV", "good");
+      const c = $("#tvCode"); if(c) c.focus();
+    } else {
+      setPairStatus((p && p.error) || "TV is quiet — TV ON? Same Wi-Fi as the PC? Remote enabled on TV?");
+    }
+  }finally{
+    state.busy = false;
+    if(btn) btn.disabled = false;
+    updateUI();
+  }
+}
+// Step 2: type the TV code → Connect.
+async function submitCode(){
+  if(state.busy) return;
+  const ip = getIp();
+  if(!validIp(ip)){ toast("Type the TV IP first — e.g. 192.168.1.84", "bad"); return; }
+  const code = (($("#tvCode") || {}).value || "").trim().replace(/\s+/g, "");
+  // If the TV was already paired, Connect works with no code at all.
+  if(!code){
+    state.busy = true;
+    try{
+      setPairStatus(`Checking ${ip}…`);
+      let v = null;
+      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }
+      catch{ setPairStatus(homePageHint()); return; }
+      if(v && v.valid){
+        if(v.name) addTv(ip, v.name); else addTv(ip);
+        setPairStatus("");
+        connectTv(state.tvs.find(x=> x.ip === ip));
+      } else {
+        setPairStatus("TV needs a code — tap Send code to TV first.");
+      }
+    }finally{ state.busy = false; updateUI(); }
+    return;
+  }
+  if(!/^[0-9A-Fa-f]{4,8}$/.test(code)){ toast("That code looks wrong — type the characters shown on the TV (digits, A–F ok)", "bad"); return; }
+  state.busy = true;
+  const btn = $("#connectBtn");
+  if(btn) btn.disabled = true;
+  try{
+    setPairStatus("Sending code…");
+    let j = null;
+    try{ j = await sameOrigin("/remote-code", {ip, code}, 25000); }
+    catch{ setPairStatus(homePageHint()); return; }
+    if(j && j.ok){
+      try{ $("#tvCode").value = ""; }catch{}
+      toast("Paired ✓ — connecting…", "good");
+      let v = null;
+      try{ v = await sameOrigin(`/validate?ip=${encodeURIComponent(ip)}`, undefined, 15000); }catch{}
+      if(v && v.name) addTv(ip, v.name); else addTv(ip);
+      setPairStatus("");
+      connectTv(state.tvs.find(x=> x.ip === ip));
+    } else {
+      setPairStatus((j && j.error) || "Wrong code — tap Send code to TV for a fresh one.");
+    }
+  }finally{
+    state.busy = false;
+    if(btn) btn.disabled = false;
+    updateUI();
+  }
 }
 function renderTvs(){
   const list = $("#tvList");
   if(!list) return;
   const others = state.tvs.filter(t=> t !== state.connected);
-  list.innerHTML = others.length ? "" : `<div style="color:var(--muted);font-size:.85em">No other TVs found yet — tap Scan.</div>`;
+  list.innerHTML = others.length ? "" : `<div style="color:var(--muted);font-size:.85em">Connected TVs show here.</div>`;
   others.forEach(tv=>{
     const el = document.createElement("div");
     el.className = "tv-item";
     el.innerHTML = `<div class="tv-avatar">${(tv.name[0] || "T").toUpperCase()}</div>
       <div class="tv-item-main"><div class="tv-item-name">${tv.name}</div>
-      <div class="tv-item-meta">${tv.ip || ""} • ${tv.model}</div></div>
+      <div class="tv-item-meta">${tv.ip}</div></div>
       <button class="btn small primary">Connect</button>`;
-    el.onclick = ()=>{ if(tv.via === "wifi") wifiConnect(tv); else connectUsbTv(tv); };
+    el.onclick = ()=>{
+      try{ $("#tvIp").value = tv.ip; }catch{}
+      submitCode();
+    };
     list.appendChild(el);
   });
-  try{ renderWifiList(); }catch{}
 }
 function updateUI(){
   const c = !!state.connected;
@@ -162,7 +228,7 @@ function updateUI(){
     const tn = $("#tvName"), ta = $("#tvAvatar"), tm = $("#tvMeta"), hn = $("#heroTvName");
     if(tn) tn.textContent = state.connected.name;
     if(ta) ta.textContent = (state.connected.name[0] || "T").toUpperCase();
-    if(tm) tm.textContent = `${state.connected.ip} • ${state.connected.via === "wifi" ? "Wi-Fi pair — home network" : "USB ADB — from this site"}`;
+    if(tm) tm.textContent = `${state.connected.ip} • paired`;
     if(hn) hn.textContent = state.connected.name;
   } else {
     const hn = $("#heroTvName");
@@ -171,9 +237,9 @@ function updateUI(){
   renderTvs();
 }
 
-// ---------- SEND (USB ADB only) ----------
+// ---------- SEND (one signal per keypress, like a real remote) ----------
 async function sendCommand(cmd, payload=""){
-  if(!state.connected){ errToastOnce("Not connected — scan and connect first"); return; }
+  if(!state.connected){ errToastOnce("Not connected — pair first"); return; }
   const tv = state.connected;
   if(cmd === "TEXT" && !state.searchActive){
     state.word += payload;
@@ -181,40 +247,15 @@ async function sendCommand(cmd, payload=""){
     toast(`Search off: “${payload}” buffered — turn 🔍 Search on to type`, "bad");
     return;
   }
-  if(!window.SiteAdb || !window.SiteAdb.isConnected()){
-    // Wi-Fi TVs don't use USB ADB — route to the home-PC helper instead.
-    if(tv.via === "wifi" && LAN_PAGE){
-      try{
-        if(cmd === "TEXT"){
-          for(const ch of String(payload || "")) await wifiPost("/cmd", {ip:tv.ip, cmd:"TEXT", payload:ch}, 12000);
-          toast(`Typed “${payload}”`, "good");
-        } else {
-          const j = await wifiPost("/cmd", {ip:tv.ip, cmd, payload:""}, 12000);
-          if(!(j && j.ok)){
-            if(j && j.error === "need-pair"){ errToastOnce("TV needs approval — tap Pair, type the TV code"); try{ wifiConnect(tv); }catch{} return; }
-            errToastOnce("TV ignored the key — on? Approved?");
-            return;
-          }
-        }
-        flashCmd(cmd);
-      }catch{ errToastOnce("Home PC unreachable — is node helper.js running?"); }
-      return;
-    }
-    errToastOnce("USB ADB not linked — tap Connect on the USB TV");
-    try{ connectUsbTv(tv); }catch{}
-    return;
-  }
   try{
-    if(cmd === "TEXT"){
-      for(const ch of String(payload || "")) await window.SiteAdb.sendText(ch);
-      toast(`Typed “${payload}”`, "good");
-    } else {
-      const code = (window.SiteAdb.KEYEVENT || {})[cmd];
-      if(!code){ errToastOnce("Unsupported key"); return; }
-      await window.SiteAdb.sendKeyevent(code);
+    const j = await sameOrigin("/cmd", {ip:tv.ip, cmd, payload:payload || ""}, 12000);
+    if(j && j.ok){ if(cmd === "TEXT") toast(`Typed “${payload}”`, "good"); flashCmd(cmd); }
+    else if(j && j.error === "need-pair"){
+      errToastOnce("TV needs approval again — type the IP, tap Send code to TV");
+      disconnect();
     }
-    flashCmd(cmd);
-  }catch(e){ errToastOnce("USB send failed — cable? TV awake? (" + String((e && e.message) || e).slice(0, 80) + ")"); }
+    else errToastOnce("TV ignored the key — on? Approved?");
+  }catch{ errToastOnce(homePageHint()); }
 }
 const ZONE_OF_CMD = {UP:"UP", DOWN:"DOWN", LEFT:"LEFT", RIGHT:"RIGHT", OK:"CENTER"};
 function flashCmd(cmd){
@@ -231,8 +272,14 @@ function flashCmd(cmd){
 $$(".dpad-btn, .qbtn").forEach(b=>{ b.onclick = ()=>{ if(b.dataset.cmd) sendCommand(b.dataset.cmd); }; });
 const _discBtn = $("#disconnectBtn");
 if(_discBtn) _discBtn.onclick = disconnect;
-const _scanBtn = $("#scanBtn");
-if(_scanBtn) _scanBtn.onclick = ()=>{ if(!state.scanning) doScan(); };
+const _sendCodeBtn = $("#sendCodeBtn");
+if(_sendCodeBtn) _sendCodeBtn.onclick = sendPairRequest;
+const _connectBtn = $("#connectBtn");
+if(_connectBtn) _connectBtn.onclick = submitCode;
+const _tvCode = $("#tvCode");
+if(_tvCode) _tvCode.addEventListener("keydown", e=>{ if(e.key === "Enter") submitCode(); e.stopPropagation(); });
+const _tvIp = $("#tvIp");
+if(_tvIp) _tvIp.addEventListener("keydown", e=>{ if(e.key === "Enter") sendPairRequest(); e.stopPropagation(); });
 const _searchToggle = $("#searchToggle");
 if(_searchToggle) _searchToggle.onchange = e=>{
   state.searchActive = e.target.checked;
@@ -271,228 +318,6 @@ document.addEventListener("keydown", e=>{
   else if(e.key.toLowerCase() === "h") sendCommand("HOME");
   else if(e.key.toLowerCase() === "m") sendCommand("MUTE");
 });
-
-// ---------- USB UI WIRING ----------
-function wireSiteAdbUI(){
-  const scanUsbBtn = $("#scanUsbBtn");
-  if(scanUsbBtn) scanUsbBtn.onclick = async ()=>{
-    if(state.scanning) return;
-    await scanSiteUsb(false);
-  };
-  const addUsbBtn = $("#addUsbBtn");
-  if(addUsbBtn) addUsbBtn.onclick = async ()=>{
-    if(!window.SiteAdb){ toast("Built-in ADB still loading…", "bad"); return; }
-    const sup = window.SiteAdb.supported();
-    if(!sup.ok){ toast(sup.reason, "bad"); setUsbStatus(sup.reason); return; }
-    try{
-      setUsbStatus("Opening USB picker — choose your TV…");
-      const picked = await window.SiteAdb.pickUsb(setUsbStatus);
-      if(!picked){ setUsbStatus("Picker closed — no device chosen."); setTimeout(()=> setUsbStatus(""), 5000); return; }
-      const tv = addUsbTv(picked);
-      updateUI();
-      if(tv) connectUsbTv(tv);
-    }catch(e){ setUsbStatus(String((e && e.message) || e).slice(0, 140)); }
-  };
-  const discUsbBtn = $("#disconnectUsbBtn");
-  if(discUsbBtn) discUsbBtn.onclick = async ()=>{
-    try{ if(window.SiteAdb) await window.SiteAdb.disconnect(); }catch{}
-    if(state.connected) disconnect(); else updateUI();
-    setUsbStatus("USB ADB unlinked.");
-    setTimeout(()=> setUsbStatus(""), 4000);
-  };
-  try{
-    if(window.SiteAdb && window.SiteAdb.onChange){
-      window.SiteAdb.onChange((snap)=>{
-        const dot = $("#usbDot"), txt = $("#usbText");
-        if(dot) dot.style.background = snap.connected ? "var(--good)" : "var(--muted)";
-        if(txt) txt.textContent = snap.connected ? `USB: ${snap.product || snap.serial}` : "USB: not linked";
-        const box = $("#usbStateBox");
-        if(box) box.classList.toggle("on", !!snap.connected);
-      });
-    }
-  }catch{}
-  try{
-    if(window.SiteAdb){
-      const sup = window.SiteAdb.supported();
-      setUsbStatus(sup.ok ? "" : sup.reason);
-    }
-  }catch{}
-}
-try{ wireSiteAdbUI(); }catch{}
-if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", ()=>{ try{ wireSiteAdbUI(); }catch{} });
-
-// ---------- WI-FI PAIR FLOW (same-origin home-PC page only) ----------
-// Active ONLY when this page is served from the home network
-// (http://192.168.x.x:5000, http://10.x:5000, localhost). On the public
-// Vercel link this whole block stays dormant and hidden: browsers cannot
-// reach a home TV from the internet, so there is nothing to attempt there.
-// Flow: Scan → TV IP auto-found → Pair request → TV shows 6-digit code →
-// type code → Connect. Strictly that, nothing else.
-function isLanPage(){
-  try{
-    const h = location.hostname || "";
-    return h === "localhost" || h === "127.0.0.1" || h === "[::1]"
-      || h.startsWith("192.168.") || h.startsWith("10.")
-      || /^172\.(1[6-9]|2\d|3[01])\./.test(h);
-  }catch{ return false; }
-}
-const LAN_PAGE = isLanPage();
-function setWifiStatus(t){ const el = $("#wifiStatus"); if(el) el.textContent = t || ""; }
-async function wifiGet(path, ms=30000){
-  const r = await fetch(path, {signal:AbortSignal.timeout(ms)});
-  return JSON.parse(await r.text());
-}
-async function wifiPost(path, body, ms=25000){
-  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body || {}), signal:AbortSignal.timeout(ms)});
-  return JSON.parse(await r.text());
-}
-function addWifiTv(ip, name){
-  if(!ip) return null;
-  let tv = state.tvs.find(x=> x.ip === ip);
-  if(!tv){
-    tv = {id:uid(), name:name || "Wi-Fi TV", ip, model:"Android TV", via:"wifi"};
-    state.tvs.push(tv);
-  }
-  tv.via = "wifi";
-  if(name) tv.name = name;
-  return tv;
-}
-function renderWifiList(){
-  const list = $("#wifiList");
-  if(!list) return;
-  const wifis = state.tvs.filter(t=> t.via === "wifi" && t !== state.connected);
-  list.innerHTML = wifis.length ? "" : `<div style="color:var(--muted);font-size:.85em">No Wi-Fi TV yet — tap Scan.</div>`;
-  wifis.forEach(tv=>{
-    const el = document.createElement("div");
-    el.className = "tv-item";
-    el.innerHTML = `<div class="tv-avatar">${(tv.name[0] || "W").toUpperCase()}</div>
-      <div class="tv-item-main"><div class="tv-item-name">${tv.name}</div>
-      <div class="tv-item-meta">${tv.ip} • Wi-Fi pair</div></div>
-      <button class="btn small primary">Pair</button>`;
-    el.onclick = ()=> wifiConnect(tv);
-    list.appendChild(el);
-  });
-}
-async function wifiScan(quiet){
-  if(!LAN_PAGE) return 0;
-  try{
-    if(!quiet){ setWifiStatus("Sweeping home Wi-Fi for the TV… (up to ~15s)"); toast("Scanning home Wi-Fi…"); }
-    const j = await wifiGet("/scan", 35000);
-    let n = 0;
-    if(j && j.tvs) for(const t of j.tvs){
-      if(!t.ip) continue;
-      addWifiTv(t.ip, t.name || "Android TV");
-      n++;
-    }
-    if(!quiet){
-      setWifiStatus(n ? `Found ${n} TV(s) — tap Pair, read the code on the TV.` : "No TV answered — TV ON? Same Wi-Fi as this PC?");
-      setTimeout(()=> setWifiStatus(""), 8000);
-    }
-    updateUI();
-    return n;
-  }catch(e){
-    if(!quiet){ setWifiStatus("Scan failed — is node helper.js running on the home PC?"); setTimeout(()=> setWifiStatus(""), 8000); }
-    return 0;
-  }
-}
-async function wifiConnect(tv){
-  if(state.connected === tv){ toast("Already connected"); return; }
-  try{
-    setWifiStatus(`Checking ${tv.ip}…`);
-    const v = await wifiGet(`/validate?ip=${encodeURIComponent(tv.ip)}`, 15000);
-    if(v && v.valid){
-      if(v.name) tv.name = v.name;
-      setWifiStatus("");
-      connectTv(tv);
-      return;
-    }
-    // TV found but unpaired → send the pair request; TV shows the code.
-    const p = await wifiPost("/remote-pair", {ip:tv.ip}, 10000);
-    if(p && p.ok && p.alreadyPaired){
-      const v2 = await wifiGet(`/validate?ip=${encodeURIComponent(tv.ip)}`, 15000);
-      if(v2 && v2.valid){ if(v2.name) tv.name = v2.name; setWifiStatus(""); connectTv(tv); return; }
-    }
-    if(p && p.ok){
-      state.wifiIp = tv.ip;
-      setWifiStatus(`Code is on your TV screen — type the 6 digits below, tap Connect with code.`);
-      toast("Pair request sent — read the code on the TV", "good");
-      const wc = $("#wifiCode"); if(wc) wc.focus();
-    } else {
-      setWifiStatus((p && p.error) || "Pair request failed — TV ON? Same Wi-Fi?");
-    }
-  }catch{ setWifiStatus("Home PC unreachable — is node helper.js running?"); }
-  updateUI();
-}
-async function wifiSubmitCode(){
-  const code = (($("#wifiCode") || {}).value || "").trim().replace(/\s+/g, "");
-  const ip = state.wifiIp || (state.tvs.find(t=> t.via === "wifi") || {}).ip;
-  if(!ip){ toast("Tap Scan first so the TV is found", "bad"); return; }
-  if(!/^[0-9A-Fa-f]{4,8}$/.test(code)){ toast("That code looks wrong — type the 4–8 characters shown on the TV (digits, A–F ok)", "bad"); return; }
-  try{
-    setWifiStatus("Sending code…");
-    const j = await wifiPost("/remote-code", {ip, code}, 25000);
-    if(j && j.ok){
-      setWifiStatus("");
-      try{ $("#wifiCode").value = ""; }catch{}
-      toast("Paired ✓ — connecting…", "good");
-      const tv = addWifiTv(ip);
-      const v = await wifiGet(`/validate?ip=${encodeURIComponent(ip)}`, 15000).catch(()=>null);
-      if(v && v.name && tv) tv.name = v.name;
-      if(tv) connectTv(tv);
-    } else {
-      setWifiStatus((j && j.error) || "Wrong code — tap Pair again for a fresh one.");
-    }
-  }catch{ setWifiStatus("Home PC unreachable — is node helper.js running?"); }
-  updateUI();
-}
-function wireWifiUI(){
-  if(!LAN_PAGE) return; // public link: box stays hidden, nothing wired
-  const box = $("#wifiBox");
-  if(box) box.classList.remove("hidden");
-  const sb = $("#wifiScanBtn");
-  if(sb) sb.onclick = ()=>{ if(!state.scanning) wifiScan(false); };
-  const pb = $("#wifiPairBtn");
-  if(pb) pb.onclick = wifiSubmitCode;
-  const wc = $("#wifiCode");
-  if(wc) wc.addEventListener("keydown", e=>{ if(e.key === "Enter") wifiSubmitCode(); e.stopPropagation(); });
-}
-try{ wireWifiUI(); }catch{}
-if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", ()=>{ try{ wireWifiUI(); if(LAN_PAGE && !state.connected) wifiScan(true); }catch{} });
-else if(LAN_PAGE && !state.connected) setTimeout(()=>{ try{ wifiScan(true); }catch{} }, 1200);
-
-// ---------- SCAN (USB only — everything happens in this page) ----------
-async function doScan(){
-  if(state.scanning) return;
-  state.scanning = true;
-  const scanBtn = $("#scanBtn");
-  if(scanBtn) scanBtn.disabled = true;
-  setScanStatus("Scanning USB devices from this site…");
-  toast("Scanning USB devices…");
-  try{
-    const n = await scanSiteUsb(true).catch(()=> 0);
-    if(LAN_PAGE){ try{ await wifiScan(true); }catch{} }
-    setScanStatus("");
-    updateUI();
-    const usbTvs = state.tvs.filter(t=> t.via === "usb-adb");
-    const wifiTvs = state.tvs.filter(t=> t.via === "wifi");
-    if(!state.connected && usbTvs.length){
-      connectUsbTv(usbTvs[0]);
-    } else if(!state.connected && wifiTvs.length){
-      wifiConnect(wifiTvs[0]);
-    } else if(!state.connected && !usbTvs.length){
-      const sup = (window.SiteAdb && window.SiteAdb.supported()) || {ok:false, reason:""};
-      toast(sup.ok
-        ? "Nothing found — plug the TV via USB, enable USB debugging, tap “Add USB device”"
-        : sup.reason || "USB not available in this browser — use Chrome/Edge.", "bad");
-      if(!sup.ok) setUsbStatus(sup.reason || "");
-    }
-  }finally{
-    state.scanning = false;
-    if(scanBtn) scanBtn.disabled = false;
-    updateUI();
-  }
-}
 
 // ---------- GESTURE ENGINE ----------
 function angleAt(a,b,c){
@@ -1101,18 +926,18 @@ async function stopCamera(){
 }
 if(camToggle) camToggle.onclick = ()=>{ running ? stopCamera() : startCamera(); };
 
-// ---------- BOOT (static site: offline cache + gesture preload, no backend) ----------
+// ---------- BOOT (static shell + gesture preload, no backend calls) ----------
 function bootProgress(pct, step){
   const f = $("#bootFill"), s = $("#bootStep");
   if(f) f.style.width = Math.max(5, Math.min(100, pct)) + "%";
   if(s && step) s.textContent = step;
 }
 const BOOT_TIPS = [
-  "Tip: plug the TV with a USB cable and enable USB debugging.",
+  "Tip: type the TV IP, send the code, type it back — connected.",
   "Tip: 👍 thumbs-up = OK, 👎 thumbs-down = Back.",
   "Tip: hold your palm steady in a grid zone to click.",
   "Tip: ✌️ two fingers draws letters when search is open.",
-  "Tip: approve “Allow USB debugging” on the TV once — it remembers.",
+  "Tip: one approval on the TV, then it remembers.",
 ];
 let _tipTimer = null;
 function bootTips(){
@@ -1147,16 +972,11 @@ function hideSplash(){
     bootProgress(46, "Loading gesture engine…");
     try{ if(typeof Hands !== "undefined") await initHands(); }catch{}
     bootProgress(80, "Ready…");
+    prefillIp();
     paintWord();
     try{ resizeOverlays(); drawZones(); }catch{}
     updateUI();
-    try{
-      if(window.SiteAdb){
-        const sup = window.SiteAdb.supported();
-        setUsbStatus(sup.ok ? "" : sup.reason);
-      }
-    }catch{}
-    bootProgress(94, "Ready — tap Scan to connect");
+    bootProgress(94, "Ready — pair your TV to begin");
   }catch{}
   const wait = Math.max(0, 1400 - (now() - t0));
   setTimeout(hideSplash, wait);

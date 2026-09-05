@@ -1,56 +1,30 @@
-# Online Remote — Gesture TV Remote (USB-ADB, static site)
+# Online Remote — Gesture TV Remote
 
-Browser → TV remote over a **USB cable**. No server, no terminal, no Wi-Fi needed.
-ADB runs **inside the website** (WebUSB), gestures run on-device (MediaPipe).
+Browser → TV remote. One flow only: **type TV IP → Send code to TV → type the TV code → Connect.** Nothing else.
 
-## What you get
+## Use it (2 minutes, first time)
 
-- **01 Connect** — Scan / Add USB device, one-tap Connect, Unlink
-- **02 Remote** — D-pad, Home/Back/Mute/Power, text send, drawn-word send
-- **03 Gestures** — palm steers arrows, 👍 = OK, 👎 = Back, ✌️ draws letters
+1. On this PC: `npm run helper` (keep it running).
+2. On your phone (same Wi-Fi): open **http://192.168.1.67:5000**.
+3. Type the TV IP (e.g. `192.168.1.84`) → **Send code to TV**.
+4. Read the code on the TV screen → type it → **Connect**.
+5. Done — D-pad, typing, and gestures work. Next time just open the page and tap **Connect** (approval is remembered).
 
-## Setup — first time (2 minutes)
+Codes can be digits (`482913`) or hex (`E2D12F`) — type exactly what the TV shows.
 
-**On the TV (once):**
-1. Settings → About → tap **Build number 7×** → Developer options appear.
-2. Settings → Developer options → turn **USB debugging ON**.
-3. Plug the TV into your phone/PC with a USB cable.
+## Why this address and not the public link
 
-**On the site:**
-4. Open your hosted URL in **Chrome or Edge** (WebUSB is Chromium-only;
-   iPhone/iPad Safari won't work — use an Android phone or a PC).
-   The page must be `https://…` (Vercel gives you that) or `localhost`.
-5. Tap **Scan for my TV** (or **Add USB device**) → pick the TV in the
-   browser's USB picker.
-6. On the TV, tick **Always allow** → tap **Allow**.
-7. Done — D-pad, keyboard (`Arrows/Enter/Backspace/H/M`), and gestures work.
-
-Next visits: plug in → open site → **Scan** → Connect. The key is remembered.
-
-## Deploy on Vercel (static, free)
-
-This repo is pure static — no functions, no env vars, no build step.
-
-- **Option A — Vercel dashboard:** Push this folder to GitHub → vercel.com →
-  Add New → Project → Import the repo → Deploy. No settings to change.
-- **Option B — CLI:** `npm i -g vercel` → `vercel` (link) → `vercel --prod`.
-
-Files served: `index.html`, `remote.js`, `adb-site.js`, `style.css`,
-`sw.js`, `manifest.webmanifest`, `icon.svg`.
-
-## Requirements / limits
-
-- Chromium browser (Chrome/Edge, Android or desktop). No Firefox/Safari USB.
-- Secure context: `https://` or `localhost` (else USB + camera are blocked).
-- One USB cable between the browsing device and the TV.
-- Gestures need camera permission + good light, 40–80 cm from camera.
+A public internet page cannot reach a home TV (`192.168.x.x`) — browsers block it and the address doesn't exist outside your house. So the working page is the one served by your own PC on your own Wi-Fi. The Vercel link hosts the same files as a backup.
 
 ## Files
 
 ```
-index.html       — UI (connect, remote, gesture grid, fullscreen zones)
-remote.js        — USB connect/send + gesture engine + camera (no deps)
-adb-site.js      — in-site ADB over WebUSB (Tango, CDN-cached, no install)
+index.html       — UI (pair box, remote, gesture grid, fullscreen zones)
+remote.js        — IP/code pairing + keys + gesture engine + camera (no deps)
+helper.js        — home PC server: serves the page + TV pairing/keys
+remote2.js       — Android TV Remote v2 protocol (pair PIN, cert saved in remote-certs/)
 style.css        — mobile-first theme
-sw.js            — offline cache for the shell + CDN libs
+sw.js            — offline cache
 ```
+
+Home PC needs one install ever: `npm install` (for `androidtv-remote`).

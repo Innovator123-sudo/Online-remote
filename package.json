@@ -2,7 +2,7 @@
   "name": "online-remote",
   "version": "4.1.0",
   "private": true,
-  "description": "Gesture TV remote. Public link = USB-ADB static site. Home PC (node helper.js) = Wi-Fi scan + pair-code + connect.",
+  "description": "Gesture TV remote. One flow: type TV IP, send code to TV, type code, connect.",
   "scripts": {
     "helper": "node helper.js",
     "start": "node helper.js"

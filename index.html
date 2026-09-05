@@ -27,7 +27,7 @@
     <div class="boot-tag">Your hand is the remote</div>
     <div class="boot-bar"><div class="boot-fill" id="bootFill"></div></div>
     <div class="boot-step" id="bootStep">Waking up…</div>
-    <div class="boot-tip" id="bootTip">Tip: plug the TV with a USB cable and enable USB debugging.</div>
+    <div class="boot-tip" id="bootTip">Tip: type the TV IP, send the code, type it back — connected.</div>
   </div>
 </div>
 
@@ -51,7 +51,7 @@
 <header class="hero">
   <div class="hero-grid">
     <div class="hero-copy">
-      <div class="eyebrow"><span class="live-dot"></span> Browser → TV • USB cable</div>
+      <div class="eyebrow"><span class="live-dot"></span> Browser → TV • Home network</div>
       <h1>Your hand <span class="accent">is the remote.</span></h1>
       <p class="sub">Point your palm at the camera grid for <strong>arrow keys</strong>, <strong>👍 thumbs-up</strong> for OK, <strong>👎 thumbs-down</strong> for Back — and <strong>draw letters in the air</strong> to type when search is open.</p>
       <div class="cta-row">
@@ -76,38 +76,24 @@
   <div class="container">
     <div class="section-head">
       <h2><span class="num">01</span> Connect your TV</h2>
-      <p id="connectHint">Plug the TV into this device with a USB cable, enable USB debugging on the TV, tap Scan — choose the TV, tap Allow on the TV once, then every button and gesture just works. No Wi-Fi, no terminal, no downloads.</p>
+      <p id="connectHint">Type the TV's IP address, send the code to the TV, type the code back — connected. Nothing else.</p>
     </div>
     <div class="card connect-card">
       <div id="connectedPanel" class="connected-empty">
         <div class="big-icon">📺</div>
         <p>Not connected</p>
-        <small>USB cable + USB debugging ON on the TV. First time: tap Allow on the TV screen — then buttons + gestures work.</small><br>
-        <button class="btn primary" id="scanBtn">🔍 Scan for my TV</button>
-        <div><small id="scanStatus" style="opacity:.8"></small></div>
-        <div class="usb-box" id="usbBox">
-          <p><strong>🔌 Built-in ADB — from this site itself</strong>
-            <small>No terminal, no download. ADB is cached in this website — plug the TV in with a USB cable, enable USB debugging on the TV, then tap below. The Scan button above checks USB too.</small></p>
-          <div class="badge on hidden" id="usbStateBox"><span class="dot" id="usbDot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block"></span> <span id="usbText">USB: not linked</span></div>
-          <div class="helper-actions">
-            <button class="btn small" id="scanUsbBtn">Scan USB devices</button>
-            <button class="btn small primary" id="addUsbBtn">Add USB device</button>
-            <button class="btn small ghost" id="disconnectUsbBtn">Unlink USB</button>
-          </div>
-          <div><small id="usbStatus" style="opacity:.8"></small></div>
-          <p class="usb-steps"><small>1: TV → Settings → Developer options → <strong>USB debugging ON</strong>. 2: connect USB cable to this phone/PC. 3: tap <strong>Add USB device</strong> → choose TV → tap <strong>Allow</strong> on the TV. Done.</small></p>
-        </div>
-        <div class="usb-box hidden" id="wifiBox">
-          <p><strong>📶 Wi-Fi pairing — home PC page only</strong>
-            <small>This box appears only on the home-PC address (<code>http://192.168.1.67:5000</code>), never on the public link. Scan finds the TV by itself, sends the pair request, you type the TV code — connected.</small></p>
-          <div class="helper-actions">
-            <button class="btn small primary" id="wifiScanBtn">Scan Wi-Fi for TV</button>
-          </div>
-          <div class="tv-list" id="wifiList"></div>
+        <small>Type your TV's IP, tap <strong>Send code to TV</strong> — the code pops up on the TV screen. Type it below, tap <strong>Connect</strong>. One approval, then it remembers.</small>
+        <div class="pair-box">
           <div class="field-row">
-            <input id="wifiCode" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="Code on TV (digits + A–F)">            <button class="btn small primary" id="wifiPairBtn">Connect with code</button>
+            <input id="tvIp" type="text" inputmode="decimal" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="TV IP address: 192.168.1.84">
+            <button class="btn small primary" id="sendCodeBtn">Send code to TV</button>
           </div>
-          <div><small id="wifiStatus" style="opacity:.8"></small></div>
+          <div class="field-row" style="margin-top:8px">
+            <input id="tvCode" type="text" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="Code shown on TV">
+            <button class="btn small primary" id="connectBtn">Connect</button>
+          </div>
+          <div><small id="pairStatus" style="opacity:.8"></small></div>
+          <p><small>Works on your home-network page (<code>http://192.168.1.67:5000</code>) with this PC on. A public internet link cannot reach a home TV.</small></p>
         </div>
       </div>
       <div id="remotePanel" class="remote-panel hidden">
@@ -235,7 +221,7 @@
 
 <footer class="footer">
   <div class="container footer-grid">
-    <div>Online Remote • Gesture Edition • Browser → TV over USB.</div>
+    <div>Online Remote • Browser → TV, home network.</div>
     <div class="footer-links"><a href="#connect">Connect</a><a href="#remote">Remote</a><a href="#gesture">Gesture</a></div>
   </div>
 </footer>
@@ -250,7 +236,6 @@
 </div>
 
 <div class="toast-stack" id="toastStack"></div>
-<script src="adb-site.js"></script>
 <script src="remote.js"></script>
 </body>
 </html>
